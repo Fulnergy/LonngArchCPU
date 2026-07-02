@@ -57,6 +57,9 @@ module Decoder (
     wire isBL     = (inst[31:26] == 6'b010101);
     wire isJIRL   = (inst[31:26] == 6'b010011);
 
+    // 移位立即数型 (SLLI.W/SRLI.W/SRAI.W)
+    wire isShiftImm = (inst[31:22] == 10'b0000000001);
+
     // 浮点条件分支
     // wire isBCEQZ  = (inst[31:26] == 6'b010010) && !inst[5];
     // wire isBCNEZ  = (inst[31:26] == 6'b010010) && inst[5];
@@ -97,6 +100,10 @@ module Decoder (
             // SLTI/SLTUI/ADDI.W/LD/ST: si12 符号扩展
             imm = {{20{inst[21]}}, inst[21:10]};
         end
+        else if (isShiftImm) begin
+            // SLLI.W/SRLI.W/SRAI.W: ui5 = inst[14:10], 零扩展
+            imm = {27'b0, inst[14:10]};
+        end
         else begin
             // 3R型 或 其他: 无立即数, 置0
             imm = 32'b0;
@@ -111,9 +118,6 @@ module Decoder (
     wire isBREAK   = (inst[31:15] == 17'b00000000001010100);
     wire isSYSCALL = (inst[31:15] == 17'b00000000001010110);
     wire is3R_ALU  = (inst[31:22] == 10'b0000000000) && !isBREAK && !isSYSCALL;
-
-    // 移位立即数型 (SLLI.W/SRLI.W/SRAI.W)
-    wire isShiftImm = (inst[31:22] == 10'b0000000001);
 
     assign memRead  = isLoad;
     assign memWrite = isStore;
