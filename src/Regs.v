@@ -1,4 +1,4 @@
-module RegControll(
+module Regs(
     input clk,
     input en,
     input regWrite0, regWrite1,
