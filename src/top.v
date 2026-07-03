@@ -12,7 +12,7 @@ wire [9:0]  opc0_id, opc1_id;
 wire [6:0]  func0_id, func1_id;
 wire [4:0]  sigs0_id, sigs1_id;
 wire [31:0] imm0, imm1;
-wire [19:0] regs0_id, regs1_id;
+wire [14:0] regs0_id, regs1_id;
 
 ID_stage uid(
     .dual_inst,
@@ -61,36 +61,57 @@ Regs urg(
 );
 
 // ── EX 级信号 ──
-wire [31:0] reg1_ex0, reg2_ex0;       // 槽0 寄存器值
-wire [31:0] reg1_ex1, reg2_ex1;       // 槽1 寄存器值
 wire [31:0] alu_result0, alu_result1;
 wire        jump_taken0;
 wire [31:0] jump_addr0;
 wire [31:0] pc;                       // TODO: 由 IF_Stage 驱动
 
-// Regs 读出 → EX 级
-assign reg1_ex0 = rdata01;
-assign reg2_ex0 = rdata02;
-assign reg1_ex1 = rdata11;
-assign reg2_ex1 = rdata12;
+// ============================================================
+// ID -> EX 流水线寄存器
+// ============================================================
+reg [9:0]  opc0_ex, opc1_ex;
+reg [6:0]  func0_ex, func1_ex;
+reg [4:0]  sigs0_ex, sigs1_ex;
+reg [14:0] regs0_ex, regs1_ex;
+reg [31:0] imm0_ex, imm1_ex;
+reg [31:0] pc_ex;
+reg [31:0] rd01_ex, rd02_ex;          // 槽0 寄存器值 (流水线后)
+reg [31:0] rd11_ex, rd12_ex;          // 槽1 寄存器值 (流水线后)
 
-//流水线传递
 always @(posedge clk) begin
-    
+    // 控制 & 译码
+    sigs0_ex <= sigs0_id;
+    sigs1_ex <= sigs1_id;
+    opc0_ex  <= opc0_id;
+    opc1_ex  <= opc1_id;
+    func0_ex <= func0_id;
+    func1_ex <= func1_id;
+    imm0_ex  <= imm0;
+    imm1_ex  <= imm1;
+    // 寄存器地址
+    regs0_ex <= regs0_id;
+    regs1_ex <= regs1_id;
+    // 寄存器值
+    rd01_ex <= rdata01;
+    rd02_ex <= rdata02;
+    rd11_ex <= rdata11;
+    rd12_ex <= rdata12;
+    // PC
+    pc_ex   <= pc;
 end
 
-// 对应槽0: ALU / Branch
+// 对应槽0: ALU / Branch (使用流水线后 EX 级信号)
 EX_ALU uea(
     .clk(clk),
     .en(1'b1),
-    .branch(sigs0_id[3]),
-    .jump(sigs0_id[4]),
-    .opcode(opc0_id),
-    .func(func0_id),
-    .reg1(reg1_ex0),
-    .reg2(reg2_ex0),
-    .imm(imm0),
-    .pc(pc),
+    .branch(sigs0_ex[3]),
+    .jump(sigs0_ex[4]),
+    .opcode(opc0_ex),
+    .func(func0_ex),
+    .reg1(rd01_ex),
+    .reg2(rd02_ex),
+    .imm(imm0_ex),
+    .pc(pc_ex),
     .alu_result(alu_result0),
     .jump_taken(jump_taken0),
     .jump_addr(jump_addr0)

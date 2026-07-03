@@ -4,7 +4,7 @@ module ID_stage(
     output [6:0] func0, func1,      // func  
     output [4:0] sigs0, sigs1,      // control bus: jump/branch/memRead/memWrite/regWrite
     output [31:0] imm0, imm1,
-    output [19:0] regs0, regs1      // regs address: rk[14:10] | rj[9:5] | rd[4:0]
+    output [14:0] regs0, regs1      // regs address: rk[14:10] | rj[9:5] | rd[4:0]
 );
 
 Decoder ud0(
