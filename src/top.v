@@ -50,10 +50,11 @@ ID_stage uid(
 );
 
 
-// ── Regs 写端口 (待 WB 级驱动) ──
-wire [4:0]  wb_waddr0, wb_waddr1;       // 写回地址 (rd)
-wire [31:0] wb_wdata0, wb_wdata1;       // 写回数据
-wire        wb_rw0, wb_rw1;             // 写使能
+// ── Regs 写端口 (WB 级驱动) ──
+reg  [4:0]  wb_waddr0, wb_waddr1;       // 写回地址 (rd)
+reg  [31:0] wb_wdata0;                   // 写回数据 槽0
+wire [31:0] wb_wdata1;                   // 写回数据 槽1 (mux 输出, 保持 wire)
+reg         wb_rw0, wb_rw1;             // 写使能
 
 // ── Regs 读端口数据 ──
 wire [31:0] rdata01, rdata02;           // 槽0 读出 (rj, rk)
@@ -87,7 +88,7 @@ Regs urg(
 );
 
 // ── EX 级信号 ──
-wire [31:0] alu_result0, alu_result1;
+wire [31:0] alu_result0;              // 槽0 ALU 结果
 wire        jump_taken0;
 wire [31:0] jump_addr0;
 
@@ -166,18 +167,62 @@ EX_LS uels(
 );
 
 // ============================================================
-// EX → MEM 流水线寄存器 (仅保留 MEM 阶段需要的信号)
+// EX → MEM 流水线寄存器
+//   slot 1: 访存控制 + WB 穿越信号
+//   slot 0: 中继气泡 (与 slot 1 同步到达 WB)
 // ============================================================
+
+// ── 槽0 中继: EX → relay → WB (NBA 逐级传递, 2 拍对齐槽1) ──
+reg [4:0]  rd0_relay;
+reg [31:0] alu0_relay;
+reg        rw0_relay;
+
+// ── 槽1 EX→MEM (访存 + WB 穿越) ──
 reg        mem_we_mem;
 reg [1:0]  mem_size_mem;
 reg [31:0] mem_addr_mem;
 reg [31:0] mem_wdata_mem;
+// WB 穿越信号
+reg [4:0]  rd1_mem;
+reg [31:0] alu_ls_mem;
+reg        rw1_mem;
+reg        memRead_mem;
 
 always @(posedge clk) begin
+    // ── 槽0: EX → relay → WB (NBA 保证 relay→wb_* 差 1 拍) ──
+    rd0_relay  <= rd0_ex;
+    alu0_relay <= alu_result0;
+    rw0_relay  <= sigs0_ex[0];
+    wb_waddr0  <= rd0_relay;           // 直接写 WB 端口
+    wb_wdata0  <= alu0_relay;
+    wb_rw0     <= rw0_relay;
+
+    // ── 槽1: EX → MEM ──
     mem_we_mem    <= mem_we_ls;
     mem_size_mem  <= mem_size_ls;
     mem_addr_mem  <= alu_result_ls;
     mem_wdata_mem <= mem_wdata_ls;
+    // WB 穿越
+    rd1_mem       <= rd1_ex;
+    alu_ls_mem    <= alu_result_ls;
+    rw1_mem       <= sigs1_ex[0];
+    memRead_mem   <= sigs1_ex[2];
+end
+
+// ============================================================
+// MEM → WB 流水线寄存器
+//   dmem 同步读有 1 拍延迟, 控制信号再打一拍对齐, 直接驱动 WB 端口
+// ============================================================
+reg [31:0] alu_ls_wb;                 // ALU 结果 (非 load 时写回)
+reg        memRead_wb;                // load 标志 (mux 选择)
+reg [31:0] mem_rdata_wb;              // dmem 读出数据
+
+always @(posedge clk) begin
+    wb_waddr1    <= rd1_mem;          // 直接写 WB 端口
+    wb_rw1       <= rw1_mem;
+    alu_ls_wb    <= alu_ls_mem;
+    memRead_wb   <= memRead_mem;
+    mem_rdata_wb <= mem_rdata;
 end
 
 // ── byte_we 译码: mem_size + 地址低 2 位 → 字节写使能 ──
@@ -202,5 +247,10 @@ MEM_Stage #(
     .write_data (mem_wdata_mem),
     .read_data  (mem_rdata)
 );
+
+// ============================================================
+// WB 级写回 (wb_wdata1 为 mux 输出, 其余端口由寄存器直接驱动)
+// ============================================================
+assign wb_wdata1 = memRead_wb ? mem_rdata_wb : alu_ls_wb;
 
 endmodule
