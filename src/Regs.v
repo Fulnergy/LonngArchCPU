@@ -3,12 +3,13 @@ module Regs(
     input en,
     input regWrite0, regWrite1,
     input [4:0] write_addr0, write_addr1,     // 写入地址
-    input [4:0] read_addr01, read_addr02,     // 槽0 读取地址 (rs, rt)
-               read_addr11, read_addr12,      // 槽1 读取地址 (rs, rt)
+    input [4:0] read_addr01, read_addr02,     // 槽0 读取地址 (rj, rk)
+               read_addr11, read_addr12,      // 槽1 读取地址 (rj, rk/rd*)
     input [31:0] write_data0, write_data1,    // 写入数据
     output [31:0] read01, read02,             // 槽0 读出数据
                   read11, read12              // 槽1 读出数据
 );
+    // * read_addr12: 非 store 时读 rk, store 时由外部 mux 切换为 rd
 
     // ============================================================
     // 32 x 32-bit 通用寄存器文件
