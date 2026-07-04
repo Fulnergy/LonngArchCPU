@@ -1,4 +1,4 @@
-module ID_stage(
+module ID_Stage(
     input [63:0] dual_inst,
     output reg [9:0] opc0, opc1,        // opcode
     output reg [6:0] func0, func1,      // func

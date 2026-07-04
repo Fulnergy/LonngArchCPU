@@ -5,44 +5,10 @@ module top(
 );
 
 // ── PC & IF 信号 ──
-reg  [12:0] pc;                         // 程序计数器 (字节地址, 8 字节对齐)
 wire [31:0] pc_next;                    // inst_controll 输出的下一 PC
 wire [31:0] dual_inst_raw;              // IF 取出的原始指令对
 wire [63:0] dual_inst;                  // inst_controll 调整后的指令对
 wire        if_en;                      // IF 级使能 (暂不 stall)
-
-assign if_en = 1'b1;
-
-// PC 更新
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
-        pc <= 13'b0;
-    else
-        pc <= pc_next[12:0];
-end
-
-
-
-
-IF_Stage uif(
-    .clk        (clk),
-    .en         (if_en),
-    .pc         (pc),
-    .dual_inst  (dual_inst_raw)
-);
-
-inst_controll uic(
-    .clk            (clk),
-    .rst_n          (rst_n),
-    .jump_taken     (jump_taken0),
-    .nop0           (nop0),
-    .nop1           (nop1),
-    .pc_jump        (jump_addr0),
-    .pc_last        ({19'b0, pc}),
-    .dual_inst_raw  (dual_inst_raw),
-    .pc_next        (pc_next),
-    .dual_inst      (dual_inst)
-);
 
 
 // ID Stage 输出
@@ -53,7 +19,59 @@ wire [31:0] imm0, imm1;
 wire [14:0] regs0_id, regs1_id;
 wire        nop0, nop1;
 
-ID_stage uid(
+// ── Regs 写端口 (WB 级驱动) ──
+reg  [4:0]  wb_waddr0, wb_waddr1;       // 写回地址 (rd)
+reg  [31:0] wb_wdata0;                   // 写回数据 槽0
+wire [31:0] wb_wdata1;                   // 写回数据 槽1 (mux 输出, 保持 wire)
+reg         wb_rw0, wb_rw1;             // 写使能
+
+// ── Regs 读端口数据 ──
+wire [31:0] rdata01, rdata02;           // 槽0 读出 (rj, rk)
+wire [31:0] rdata11, rdata12;           // 槽1 读出 (rj, rk)
+
+// 槽1 read_addr12 mux: store 时读 rd, 否则读 rk
+wire [4:0] slot1_addr12;
+
+// ── EX 级信号 ──
+wire [31:0] alu_result0;              // 槽0 ALU 结果
+wire        jump_taken0;
+wire [31:0] jump_addr0;
+
+// ── 槽1: EX_LS (ALU + Load/Store 地址计算) ──
+wire [31:0] alu_result_ls;            // 访存地址 / ALU 结果
+wire        mem_we_ls;                // 存储器写使能
+wire [1:0]  mem_size_ls;              // 访存宽度: 00=byte, 01=half, 10=word
+wire [31:0] mem_wdata_ls;             // 写入存储器的数据
+
+wire [3:0] byte_we_mem;
+
+wire [31:0] mem_rdata;                // load 读回数据
+
+assign if_en = 1'b1;
+
+IF_Stage uif(
+    .clk        (clk),
+    .en         (if_en),
+    .pc         (pc_next[12:0]),
+    .dual_inst  (dual_inst_raw)
+);
+
+inst_controll uic(
+    .clk            (clk),
+    .rst_n          (rst_n),
+    .jump_taken     (jump_taken0),
+    .nop0           (nop0),
+    .nop1           (nop1),
+    .pc_jump        (jump_addr0),
+    .pc_last        (pc_next),
+    .dual_inst_raw  (dual_inst_raw),
+    .pc_next        (pc_next),
+    .dual_inst      (dual_inst)
+);
+
+
+
+ID_Stage uid(
     .dual_inst(dual_inst),
     .opc0(opc0_id),
     .opc1(opc1_id),
@@ -70,18 +88,6 @@ ID_stage uid(
 );
 
 
-// ── Regs 写端口 (WB 级驱动) ──
-reg  [4:0]  wb_waddr0, wb_waddr1;       // 写回地址 (rd)
-reg  [31:0] wb_wdata0;                   // 写回数据 槽0
-wire [31:0] wb_wdata1;                   // 写回数据 槽1 (mux 输出, 保持 wire)
-reg         wb_rw0, wb_rw1;             // 写使能
-
-// ── Regs 读端口数据 ──
-wire [31:0] rdata01, rdata02;           // 槽0 读出 (rj, rk)
-wire [31:0] rdata11, rdata12;           // 槽1 读出 (rj, rk)
-
-// 槽1 read_addr12 mux: store 时读 rd, 否则读 rk
-wire [4:0] slot1_addr12;
 assign slot1_addr12 = sigs1_id[1] ? regs1_id[4:0] : regs1_id[14:10];
                                            // memWrite=1 → rd, else → rk
 
@@ -107,10 +113,6 @@ Regs urg(
     .read12(rdata12)
 );
 
-// ── EX 级信号 ──
-wire [31:0] alu_result0;              // 槽0 ALU 结果
-wire        jump_taken0;
-wire [31:0] jump_addr0;
 
 // ============================================================
 // ID -> EX 流水线寄存器
@@ -143,7 +145,7 @@ always @(posedge clk) begin
     rd11_ex <= rdata11;
     rd12_ex <= rdata12;
     // PC
-    pc_ex   <= pc;
+    pc_ex   <= pc_next;
 end
 
 // 对应槽0: ALU / Branch (使用流水线后 EX 级信号)
@@ -162,12 +164,6 @@ EX_ALU uea(
     .jump_taken(jump_taken0),
     .jump_addr(jump_addr0)
 );
-
-// ── 槽1: EX_LS (ALU + Load/Store 地址计算) ──
-wire [31:0] alu_result_ls;            // 访存地址 / ALU 结果
-wire        mem_we_ls;                // 存储器写使能
-wire [1:0]  mem_size_ls;              // 访存宽度: 00=byte, 01=half, 10=word
-wire [31:0] mem_wdata_ls;             // 写入存储器的数据
 
 EX_LS uels(
     .clk        (clk),
@@ -246,14 +242,12 @@ always @(posedge clk) begin
 end
 
 // ── byte_we 译码: mem_size + 地址低 2 位 → 字节写使能 ──
-wire [3:0] byte_we_mem;
 assign byte_we_mem =
     (mem_size_mem == 2'b00) ? (4'b0001 << mem_addr_mem[1:0]) :        // byte
     (mem_size_mem == 2'b01) ? (4'b0011 << {mem_addr_mem[1], 1'b0}) :  // halfword
                               4'b1111;                                  // word
 
 // ── MEM Stage: 数据存储器 ──
-wire [31:0] mem_rdata;                // load 读回数据
 
 MEM_Stage #(
     .ADDR_WIDTH (15),

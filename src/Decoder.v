@@ -3,7 +3,7 @@ module Decoder (
     input wire [31:0] inst,
     output wire [9:0] opcode,
     output wire [6:0] func,
-    output [31:0] imm,
+    output reg [31:0] imm,
     // 寄存器地址 (rd=inst[4:0], rj=inst[9:5], rk=inst[14:10])
     output wire [4:0] rd,
     output wire [4:0] rj,
@@ -78,7 +78,6 @@ module Decoder (
     // 立即数生成
     // ============================================================
     // 根据指令类型从不同位域拼接并做符号/零扩展
-    reg [31:0] imm;
     always @(*) begin
         if (isLU12IW || isPCADDU12I) begin
             // 1RI21: si20 << 12

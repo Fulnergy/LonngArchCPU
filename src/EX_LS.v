@@ -8,7 +8,7 @@ module EX_LS(
     input [31:0] reg2,           // rk 或立即数 (ALU操作数2)
     input [31:0] store_data,     // rd 值 (仅 store 时有效)
     input [31:0] imm,            // 解码后立即数
-    output [31:0] alu_result,    // ALU结果 / 访存地址
+    output reg [31:0] alu_result,    // ALU结果 / 访存地址
     output mem_we,               // 存储器写使能
     output [1:0] mem_size,       // 00=byte, 01=halfword, 10=word
     output [31:0] mem_wdata      // 写入存储器的数据
@@ -86,7 +86,6 @@ module EX_LS(
 
     // 访存宽度 (所有 LS 指令的 opcode[1:0] = inst[23:22])
     //   00 = byte, 01 = halfword, 10 = word
-    wire [1:0] mem_size;
     assign mem_size = opcode[1:0];
 
     assign mem_we    = memWrite;
@@ -96,7 +95,6 @@ module EX_LS(
     // ALU 主逻辑 (与 EX_ALU 相同，但无分支/跳转)
     // ============================================================
     reg  [63:0] product;
-    reg  [31:0] alu_result;
 
     always @(*) begin
         if (!en) begin
