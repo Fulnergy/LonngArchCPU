@@ -5,9 +5,9 @@ module inst_controll(
     input nop0, nop1, //0或1槽的指令不运行
     input [31:0] pc_jump,
     input [31:0] pc_last,
-    input [63:0] dual_inst_raw,
+    input [63:0] dual_inst_raw,//来自IF的生指令
     output reg [31:0] pc_next,//将给IF取指的地址
-    output [63:0] dual_inst
+    output [63:0] dual_inst //输出给ID的指令
 );
 
 reg [31:0] left;//之前剩的指令，若没剩则不需要有
