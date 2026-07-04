@@ -24,7 +24,7 @@ end
 IF_Stage uif(
     .clk        (clk),
     .en         (if_en),
-    .inst_addr  (pc),
+    .pc         (pc),
     .dual_inst  (dual_inst)
 );
 

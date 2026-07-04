@@ -2,7 +2,7 @@
 module IF_Stage(
     input  wire         clk,
     input  wire         en,              // 取指使能, 0=stall
-    input  wire [12:0]  inst_addr,       // 字节地址 (13b → 8KB)
+    input  wire [12:0]  pc,       // 字节地址 (13b → 8KB)
     output wire [31:0]  dual_inst        // 双发射指令: {inst_ls, inst_alu}
 );
 
@@ -17,7 +17,7 @@ module IF_Stage(
     ) u_imem (
         .clk   (clk),
         .rst_n (1'b1),                   // BRAM 读路径无需复位
-        .addr  (inst_addr),
+        .addr  (pc),
         .dout  (dual_inst)
     );
 
