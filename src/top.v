@@ -6,7 +6,7 @@ module top(
 
 // ── PC & IF 信号 ──
 wire [31:0] pc_next;                    // inst_controll 输出的下一 PC
-wire [31:0] dual_inst_raw;              // IF 取出的原始指令对
+wire [63:0] dual_inst_raw;              // IF 取出的原始指令对
 wire [63:0] dual_inst;                  // inst_controll 调整后的指令对
 wire        if_en;                      // IF 级使能 (暂不 stall)
 
@@ -69,7 +69,11 @@ inst_controll uic(
     .dual_inst      (dual_inst)
 );
 
-
+reg [31:0] pc_id;
+//使pc跟随流水线流动，以使pcaddu12等得到正确结果
+always @(posedge clk) begin
+    pc_id<=pc_next;
+end
 
 ID_Stage uid(
     .dual_inst(dual_inst),
@@ -145,7 +149,7 @@ always @(posedge clk) begin
     rd11_ex <= rdata11;
     rd12_ex <= rdata12;
     // PC
-    pc_ex   <= pc_next;
+    pc_ex   <= pc_id;
 end
 
 // 对应槽0: ALU / Branch (使用流水线后 EX 级信号)

@@ -3,11 +3,8 @@ module IF_Stage(
     input  wire         clk,
     input  wire         en,              // 取指使能, 0=stall
     input  wire [12:0]  pc,       // 字节地址 (13b → 8KB)
-    output wire [31:0]  dual_inst        // 双发射指令: {inst_ls, inst_alu}
+    output wire [63:0]  dual_inst        // 双发射指令: {inst_ls, inst_alu}
 );
-
-    // imem 64b 数据线
-    wire [63:0] imem_dout;
 
     // 例化 64 位宽指令存储器
     imem #(
