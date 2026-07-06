@@ -43,14 +43,14 @@ module EX_LS(
     // ============================================================
     // 3R型 ALU 功能码
     // ============================================================
-    wire fADD   = (func == 7'h10);
-    wire fSUB   = (func == 7'h11);
-    wire fSLT   = (func == 7'h12);
-    wire fSLTU  = (func == 7'h13);
-    wire fNOR   = (func == 7'h14);
-    wire fAND   = (func == 7'h15);
-    wire fOR    = (func == 7'h16);
-    wire fXOR   = (func == 7'h17);
+    wire fADD   = (func == 7'h20);
+    wire fSUB   = (func == 7'h22);
+    wire fSLT   = (func == 7'h24);
+    wire fSLTU  = (func == 7'h25);
+    wire fNOR   = (func == 7'h28);
+    wire fAND   = (func == 7'h29);
+    wire fOR    = (func == 7'h2A);
+    wire fXOR   = (func == 7'h2B);
     wire fSLL   = (func == 7'h2E);
     wire fSRL   = (func == 7'h2F);
     wire fSRA   = (func == 7'h30);
