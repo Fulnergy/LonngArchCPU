@@ -81,12 +81,12 @@ module EX_ALU(
     // ============================================================
     // I型 ALU 操作 (opcode 低 4bit 区分)
     // ============================================================
-    wire iADDI  = (opcode == 10'h028);   // 0000001010
-    wire iANDI  = (opcode == 10'h034);   // 0000001101
-    wire iORI   = (opcode == 10'h038);   // 0000001110
-    wire iXORI  = (opcode == 10'h03C);   // 0000001111
-    wire iSLTI  = (opcode == 10'h020);   // 0000001000
-    wire iSLTUI = (opcode == 10'h024);   // 0000001001
+    wire iADDI  = (opcode == 10'h00A);   // 0000001010
+    wire iANDI  = (opcode == 10'h00D);   // 0000001101
+    wire iORI   = (opcode == 10'h00E);   // 0000001110
+    wire iXORI  = (opcode == 10'h00F);   // 0000001111
+    wire iSLTI  = (opcode == 10'h008);   // 0000001000
+    wire iSLTUI = (opcode == 10'h009);   // 0000001001
 
     // 移位立即数子类型
     wire sSLLI  = (func == 7'h01);

@@ -65,12 +65,12 @@ module EX_LS(
     // ============================================================
     // I型 ALU 操作
     // ============================================================
-    wire iADDI  = (opcode == 10'h028);
-    wire iANDI  = (opcode == 10'h034);
-    wire iORI   = (opcode == 10'h038);
-    wire iXORI  = (opcode == 10'h03C);
-    wire iSLTI  = (opcode == 10'h020);
-    wire iSLTUI = (opcode == 10'h024);
+    wire iADDI  = (opcode == 10'h00A);   // 0000001010
+    wire iANDI  = (opcode == 10'h00D);   // 0000001101
+    wire iORI   = (opcode == 10'h00E);   // 0000001110
+    wire iXORI  = (opcode == 10'h00F);   // 0000001111
+    wire iSLTI  = (opcode == 10'h008);   // 0000001000
+    wire iSLTUI = (opcode == 10'h009);   // 0000001001
 
     // 移位立即数子类型
     wire sSLLI  = (func == 7'h01);
