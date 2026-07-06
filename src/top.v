@@ -1,5 +1,9 @@
 //双发射，槽0可branch,槽1可load/store，二者都兼容alu
-module top(
+module top #(
+    parameter IMEM_FILE  = "imem_init.hex" ,
+    parameter DMEM_FILE  = "dmem_init.hex"
+)
+(
     input clk,
     input rst_n
 );
@@ -49,7 +53,9 @@ wire [31:0] mem_rdata;                // load 读回数据
 
 assign if_en = 1'b1;
 
-IF_Stage uif(
+IF_Stage #(
+    .IMEM_FILE (IMEM_FILE)
+) uif (
     .clk        (clk),
     .en         (if_en),
     .pc         (pc_next[12:0]),
@@ -256,7 +262,7 @@ assign byte_we_mem =
 MEM_Stage #(
     .ADDR_WIDTH (15),
     .DATA_WIDTH (32),
-    .INIT_FILE  ("dmem_init.hex")
+    .INIT_FILE  (DMEM_FILE)
 ) umem (
     .clk        (clk),
     .wr_en      (mem_we_mem),
