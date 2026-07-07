@@ -192,6 +192,11 @@ EX_LS uels(
     .mem_wdata  (mem_wdata_ls)
 );
 
+// load 符号/零扩展标志: opcode[3] (inst[25])
+//  0 = 符号扩展 (LDB / LDH)
+//  1 = 零扩展 (LDBU / LDHU)
+wire signExt_ls = opc1_ex[3];
+
 // ============================================================
 // EX → MEM 流水线寄存器
 //   slot 1: 访存控制 + WB 穿越信号
@@ -213,6 +218,7 @@ reg [4:0]  rd1_mem;
 reg [31:0] alu_ls_mem;
 reg        rw1_mem;
 reg        memRead_mem;
+reg        signExt_mem;               // load 符号扩展标志
 
 always @(posedge clk) begin
     // ── 槽0: EX → relay → WB (NBA 保证 relay→wb_* 差 1 拍) ──
@@ -233,6 +239,7 @@ always @(posedge clk) begin
     alu_ls_mem    <= alu_result_ls;
     rw1_mem       <= sigs1_ex[0];
     memRead_mem   <= sigs1_ex[2];
+    signExt_mem   <= signExt_ls;
 end
 
 // ============================================================
@@ -241,6 +248,7 @@ end
 // ============================================================
 reg [31:0] alu_ls_wb;                 // ALU 结果 (非 load 时写回)
 reg        memRead_wb;                // load 标志 (mux 选择)
+reg        signExt_wb;                // 符号扩展标志
 reg [31:0] mem_rdata_wb;              // dmem 读出数据
 
 always @(posedge clk) begin
@@ -248,6 +256,7 @@ always @(posedge clk) begin
     wb_rw1       <= rw1_mem;
     alu_ls_wb    <= alu_ls_mem;
     memRead_wb   <= memRead_mem;
+    signExt_wb   <= signExt_mem;
     mem_rdata_wb <= mem_rdata;
 end
 
@@ -266,6 +275,7 @@ MEM_Stage #(
 ) umem (
     .clk        (clk),
     .wr_en      (mem_we_mem),
+    .signExt    (signExt_mem),
     .byte_we    (byte_we_mem),
     .data_addr  (mem_addr_mem[14:0]),
     .write_data (mem_wdata_mem),
