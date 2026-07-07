@@ -47,8 +47,6 @@ wire        mem_we_ls;                // 存储器写使能
 wire [1:0]  mem_size_ls;              // 访存宽度: 00=byte, 01=half, 10=word
 wire [31:0] mem_wdata_ls;             // 写入存储器的数据
 
-wire [3:0] byte_we_mem;
-
 wire [31:0] mem_rdata;                // load 读回数据
 
 assign if_en = 1'b1;
@@ -260,12 +258,6 @@ always @(posedge clk) begin
     mem_rdata_wb <= mem_rdata;
 end
 
-// ── byte_we 译码: mem_size + 地址低 2 位 → 字节写使能 ──
-assign byte_we_mem =
-    (mem_size_mem == 2'b00) ? (4'b0001 << mem_addr_mem[1:0]) :        // byte
-    (mem_size_mem == 2'b01) ? (4'b0011 << {mem_addr_mem[1], 1'b0}) :  // halfword
-                              4'b1111;                                  // word
-
 // ── MEM Stage: 数据存储器 ──
 
 MEM_Stage #(
@@ -276,8 +268,8 @@ MEM_Stage #(
     .clk        (clk),
     .wr_en      (mem_we_mem),
     .signExt    (signExt_mem),
-    .byte_we    (byte_we_mem),
-    .data_addr  (mem_addr_mem[14:0]),
+    .mem_size   (mem_size_mem),
+    .data_addr  (mem_addr_mem[16:0]),    // 字节地址 (17b → 128KB)
     .write_data (mem_wdata_mem),
     .read_data  (mem_rdata)
 );
