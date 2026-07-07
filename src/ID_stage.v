@@ -55,11 +55,14 @@ module ID_Stage(
     wire raw_br0 = raw_sigs0[3];                    // branch
     wire raw_br1 = raw_sigs1[3];
 
-    wire conflict_ls = raw_ls0 && raw_ls1;          // 双 LS → 只有槽1能跑
-    wire conflict_br = raw_br0 && raw_br1;          // 双 Branch → 只有槽0能跑
+    wire conflict_ls = raw_ls0 && raw_ls1;          // 双 LS → 只有槽1能跑, 移槽0→槽1
+    wire conflict_br = raw_br0 && raw_br1;          // 双 Branch → 只有槽0能跑, 废弃槽1
+    wire swap_ls     = raw_ls0 && !raw_ls1;          // 槽0=LS, 槽1≠LS → 交换(LS→槽1)
+    wire swap_br     = raw_br1 && !raw_br0;          // 槽1=BR, 槽0≠BR → 交换(BR→槽0)
 
     // ============================================================
     // 输出路由: raw → 实际输出
+    //   priority: conflict_ls > conflict_br > swap_ls > swap_br > normal
     // ============================================================
     always @(*) begin
         if (conflict_ls) begin
@@ -75,6 +78,20 @@ module ID_Stage(
                 {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
             {opc1, func1, sigs1, imm1, regs1, nop1} =
                 {10'b0,  7'b0,  5'b0,  32'b0, 15'b0, 1'b1};
+        end
+        else if (swap_ls) begin
+            // 槽0=LS, 槽1=ALU/NOP → 交换: LS→槽1, ALU→槽0
+            {opc0, func0, sigs0, imm0, regs0, nop0} =
+                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, 1'b0};
+            {opc1, func1, sigs1, imm1, regs1, nop1} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
+        end
+        else if (swap_br) begin
+            // 槽1=BR, 槽0=ALU/NOP → 交换: BR→槽0, ALU→槽1
+            {opc0, func0, sigs0, imm0, regs0, nop0} =
+                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, 1'b0};
+            {opc1, func1, sigs1, imm1, regs1, nop1} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
         end
         else begin
             // 正常双发射
