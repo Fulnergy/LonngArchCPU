@@ -42,8 +42,10 @@ module Decoder (
     wire isLogicImm = isANDI || isORI || isXORI;
 
     // 访存指令 (opcode[31:27] = 00101)
-    wire isLoad  = (inst[31:27] == 5'b00101) && (inst[26:25] != 2'b11);
-    wire isStore = (inst[31:27] == 5'b00101) && (inst[26:25] == 2'b01);
+    //   编码: inst[26]=0→整数, inst[24]=0→load, inst[24]=1→store
+    //         inst[26]=1→浮点(暂不实现)
+    wire isLoad  = (inst[31:27] == 5'b00101) && !inst[26] && !inst[24];
+    wire isStore = (inst[31:27] == 5'b00101) && !inst[26] &&  inst[24];
 
     // 浮点访存 (opcode[31:27] = 00101, inst[26:25] = 11)
     // wire isFPStore = (inst[31:27] == 5'b00101) && (inst[26:25] == 2'b11) && inst[24];
