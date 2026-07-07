@@ -3,7 +3,7 @@
 <!--                                                         -->
 <!-- Copyright 1986-2017 Xilinx, Inc. All Rights Reserved.   -->
 
-<Project Version="7" Minor="35" Path="D:/_CPU_development/LoongArchCPU/LoongArchCPU/LoongArchCPU.xpr">
+<Project Version="7" Minor="35" Path="D:/download/LonngArchCPU/LoongArchCPU/LoongArchCPU.xpr">
   <DefaultLaunch Dir="$PRUNDIR"/>
   <Configuration>
     <Option Name="Id" Val="b6f1c02a4def47ddbb4a8e6d5cc17f20"/>
@@ -162,6 +162,11 @@
       <File Path="$PPRDIR/../testbench/bench_ls.mem">
         <FileInfo>
           <Attr Name="UsedIn" Val="synthesis"/>
+          <Attr Name="UsedIn" Val="simulation"/>
+        </FileInfo>
+      </File>
+      <File Path="$PSIMDIR/sim_1/behav/tb_simple_behav.wcfg">
+        <FileInfo>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
