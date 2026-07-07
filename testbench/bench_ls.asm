@@ -7,8 +7,14 @@
     addi.w    $r1, $r0, 0
     addi.w    $r2, $r0, 0x5A
     lu12i.w   $r3, 0x8
-    ori       $r3, $r3, 0x765
     lu12i.w   $r4, 0x12345
+    addi.w    $r0, $r0, 0
+    addi.w    $r0, $r0, 0
+    addi.w    $r0, $r0, 0
+    addi.w    $r0, $r0, 0
+    addi.w    $r0, $r0, 0
+    addi.w    $r0, $r0, 0
+    ori       $r3, $r3, 0x765
     ori       $r4, $r4, 0x678
 
 # ── 等待写回 ──
