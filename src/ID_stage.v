@@ -5,6 +5,8 @@ module ID_Stage(
     output reg [4:0] sigs0, sigs1,      // {jump, branch, memRead, memWrite, regWrite}
     output reg [31:0] imm0, imm1,
     output reg [14:0] regs0, regs1,     // {rk, rj, rd}
+    output reg valid_rd0, valid_rj0, valid_rk0,
+    output reg valid_rd1, valid_rj1, valid_rk1,
     output reg nop0, nop1
 );
 
@@ -16,6 +18,8 @@ module ID_Stage(
     wire [4:0]  raw_sigs0, raw_sigs1;
     wire [31:0] raw_imm0, raw_imm1;
     wire [14:0] raw_regs0, raw_regs1;
+    wire        raw_vrd0, raw_vrj0, raw_vrk0;
+    wire        raw_vrd1, raw_vrj1, raw_vrk1;
 
     Decoder ud0(
         .inst(dual_inst[31:0]),
@@ -25,6 +29,9 @@ module ID_Stage(
         .rd(raw_regs0[4:0]),
         .rj(raw_regs0[9:5]),
         .rk(raw_regs0[14:10]),
+        .valid_rd(raw_vrd0),
+        .valid_rj(raw_vrj0),
+        .valid_rk(raw_vrk0),
         .memRead(raw_sigs0[2]),
         .memWrite(raw_sigs0[1]),
         .branch(raw_sigs0[3]),
@@ -40,6 +47,9 @@ module ID_Stage(
         .rd(raw_regs1[4:0]),
         .rj(raw_regs1[9:5]),
         .rk(raw_regs1[14:10]),
+        .valid_rd(raw_vrd1),
+        .valid_rj(raw_vrj1),
+        .valid_rk(raw_vrk1),
         .memRead(raw_sigs1[2]),
         .memWrite(raw_sigs1[1]),
         .branch(raw_sigs1[3]),
@@ -67,38 +77,38 @@ module ID_Stage(
     always @(*) begin
         if (conflict_ls) begin
             // 槽0 的 LS 指令搬到槽1, 槽0 插入 NOP
-            {opc0, func0, sigs0, imm0, regs0, nop0} =
-                {10'b0,  7'b0,  5'b0,  32'b0, 15'b0, 1'b1};
-            {opc1, func1, sigs1, imm1, regs1, nop1} =
-                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
+            {opc0, func0, sigs0, imm0, regs0, valid_rd0, valid_rj0, valid_rk0, nop0} =
+                {10'b0,  7'b0,  5'b0,  32'b0, 15'b0, 1'b0, 1'b0, 1'b0, 1'b1};
+            {opc1, func1, sigs1, imm1, regs1, valid_rd1, valid_rj1, valid_rk1, nop1} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, raw_vrd0, raw_vrj0, raw_vrk0, 1'b0};
         end
         else if (conflict_br) begin
             // 槽0 的 Branch 保留, 槽1 插入 NOP
-            {opc0, func0, sigs0, imm0, regs0, nop0} =
-                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
-            {opc1, func1, sigs1, imm1, regs1, nop1} =
-                {10'b0,  7'b0,  5'b0,  32'b0, 15'b0, 1'b1};
+            {opc0, func0, sigs0, imm0, regs0, valid_rd0, valid_rj0, valid_rk0, nop0} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, raw_vrd0, raw_vrj0, raw_vrk0, 1'b0};
+            {opc1, func1, sigs1, imm1, regs1, valid_rd1, valid_rj1, valid_rk1, nop1} =
+                {10'b0,  7'b0,  5'b0,  32'b0, 15'b0, 1'b0, 1'b0, 1'b0, 1'b1};
         end
         else if (swap_ls) begin
             // 槽0=LS, 槽1=ALU/NOP → 交换: LS→槽1, ALU→槽0
-            {opc0, func0, sigs0, imm0, regs0, nop0} =
-                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, 1'b0};
-            {opc1, func1, sigs1, imm1, regs1, nop1} =
-                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
+            {opc0, func0, sigs0, imm0, regs0, valid_rd0, valid_rj0, valid_rk0, nop0} =
+                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, raw_vrd1, raw_vrj1, raw_vrk1, 1'b0};
+            {opc1, func1, sigs1, imm1, regs1, valid_rd1, valid_rj1, valid_rk1, nop1} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, raw_vrd0, raw_vrj0, raw_vrk0, 1'b0};
         end
         else if (swap_br) begin
             // 槽1=BR, 槽0=ALU/NOP → 交换: BR→槽0, ALU→槽1
-            {opc0, func0, sigs0, imm0, regs0, nop0} =
-                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, 1'b0};
-            {opc1, func1, sigs1, imm1, regs1, nop1} =
-                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
+            {opc0, func0, sigs0, imm0, regs0, valid_rd0, valid_rj0, valid_rk0, nop0} =
+                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, raw_vrd1, raw_vrj1, raw_vrk1, 1'b0};
+            {opc1, func1, sigs1, imm1, regs1, valid_rd1, valid_rj1, valid_rk1, nop1} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, raw_vrd0, raw_vrj0, raw_vrk0, 1'b0};
         end
         else begin
             // 正常双发射
-            {opc0, func0, sigs0, imm0, regs0, nop0} =
-                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, 1'b0};
-            {opc1, func1, sigs1, imm1, regs1, nop1} =
-                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, 1'b0};
+            {opc0, func0, sigs0, imm0, regs0, valid_rd0, valid_rj0, valid_rk0, nop0} =
+                {raw_opc0, raw_func0, raw_sigs0, raw_imm0, raw_regs0, raw_vrd0, raw_vrj0, raw_vrk0, 1'b0};
+            {opc1, func1, sigs1, imm1, regs1, valid_rd1, valid_rj1, valid_rk1, nop1} =
+                {raw_opc1, raw_func1, raw_sigs1, raw_imm1, raw_regs1, raw_vrd1, raw_vrj1, raw_vrk1, 1'b0};
         end
     end
 

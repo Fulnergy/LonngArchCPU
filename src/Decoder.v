@@ -8,6 +8,9 @@ module Decoder (
     output wire [4:0] rd,
     output wire [4:0] rj,
     output wire [4:0] rk,
+    output wire valid_rd,            // rd 字段有效 (指令写回 rd)
+    output wire valid_rj,            // rj 字段有效 (指令用到 rj)
+    output wire valid_rk,            // rk 字段有效 (指令用到 rk)
     output wire memRead, memWrite,
     output wire branch,
     output wire jump,   // branch以外的跳转
@@ -32,7 +35,7 @@ module Decoder (
     // 特殊立即数ALU (1RI21型)
     wire isLU12IW    = (inst[31:26] == 6'b000101);
     wire isPCADDU12I = (inst[31:26] == 6'b000111);
-
+    
     // I型ALU (2RI12格式: SLTI/SLTUI/ADDI.W/ANDI/ORI/XORI)
     //   31:26 = 000000, 且 25:22 != 0000 以排除 3R 型
     wire isALUimm   = (inst[31:26] == 6'b000000) && (inst[25:22] != 4'b0000);
@@ -130,5 +133,13 @@ module Decoder (
                    || isLoad                               // 加载写回
                    || isBL || isJIRL                       // 链接跳转写回
                    || isLU12IW || isPCADDU12I;             // 立即数装载
+
+    // ============================================================
+    // 寄存器字段有效性
+    // ============================================================
+    assign valid_rd = regWrite && !isBL;         // BL写r1, 其余写rd
+    assign valid_rj = !(isLU12IW || isPCADDU12I  // 1RI21: inst[9:5]属si20
+                     || isB || isBL);            // I26:  inst[9:5]属offs26
+    assign valid_rk = is3R_ALU;                  // 仅3R型用到rk
 
 endmodule
