@@ -1,0 +1,132 @@
+//pc控制与缓存裁定
+module inst_controll(
+    input clk,
+    input rst_n,
+    input jump_taken,
+    input nopl, noph,                 // ID_Stage: 低/高位解码位置的指令未发射
+    input [31:0] pc_jump,
+    input [63:0] dual_inst_raw,       // 来自 IF 的生指令
+    output reg [31:0] pc_next,         // 将给 IF 取指的地址
+    output [63:0] dual_inst           // 输出给 ID 的指令 {高32, 低32}
+);
+
+    // ============================================================
+    // 状态定义
+    // ============================================================
+    reg [31:0] buffer;                 // 1条缓存指令
+
+    reg [1:0] status;
+    localparam INST   = 2'd0;          // 无缓存, 输出{raw[63:32], raw[31:0]}
+    localparam BUF    = 2'd1;          // 有缓存, 输出{raw[31:0],  buffer}
+    localparam BUF_IH = 2'd2;          // 有缓存, 输出{raw[63:32], buffer} (raw[31:0]已在上拍消费)
+
+    // ============================================================
+    // 输出
+    // ============================================================
+    assign dual_inst = (status == BUF_IH) ? {dual_inst_raw[63:32], buffer}
+                     : (status == BUF)    ? {dual_inst_raw[31:0],  buffer}
+                     :                      dual_inst_raw;          // INST
+
+    // ============================================================
+    // 状态机
+    // ============================================================
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            status  <= INST;
+            buffer  <= 32'b0;
+            pc_next <= 32'b0;
+        end
+        else if (jump_taken) begin
+            // ── 跳转: 清空缓存, 跳到目标 ──
+            status  <= INST;
+            buffer  <= 32'b0;
+            pc_next <= pc_jump;
+        end
+        else begin
+            case (status)
+
+                // ── INST: 无缓存, 双指令都来自 raw ──
+                INST: begin
+                    if (!nopl && !noph) begin
+                        // 双发射 → PC+8, 不存缓存
+                        status  <= INST;
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else if (!nopl && noph) begin
+                        // 高位未发, 存 raw[63:32] → BUF
+                        status  <= BUF;
+                        buffer  <= dual_inst_raw[63:32];
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else if (nopl && !noph) begin
+                        // 低位未发, 存 raw[31:0] → BUF
+                        status  <= BUF;
+                        buffer  <= dual_inst_raw[31:0];
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else begin  // nopl && noph
+                        // 全 stall → PC 不变
+                        status  <= INST;
+                        pc_next <= pc_next;
+                    end
+                end
+
+                // ── BUF: 缓存 + raw[31:0], raw[63:32] 隐藏 ──
+                BUF: begin
+                    if (!nopl && !noph) begin
+                        // 双发射 → PC+8, 清缓存
+                        status  <= INST;
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else if (!nopl && noph) begin
+                        // raw[31:0]未发, 退回 INST, PC不变
+                        status  <= INST;
+                        pc_next <= pc_next;
+                    end
+                    else if (nopl && !noph) begin
+                        // buffer未发, raw[31:0]已发 → BUF_IH, PC不变
+                        status  <= BUF_IH;
+                        pc_next <= pc_next;
+                    end
+                    else begin  // nopl && noph
+                        // 全 stall → PC 不变
+                        status  <= BUF;
+                        pc_next <= pc_next;
+                    end
+                end
+
+                // ── BUF_IH: 缓存 + raw[63:32], raw[31:0] 已消费 ──
+                BUF_IH: begin
+                    if (!nopl && !noph) begin
+                        // 双发射 → PC+8, 清缓存
+                        status  <= INST;
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else if (!nopl && noph) begin
+                        // raw[63:32]未发, 存为缓存 → BUF, PC+8
+                        status  <= BUF;
+                        buffer  <= dual_inst_raw[63:32];
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else if (nopl && !noph) begin
+                        // buffer未发, raw[63:32]已发 → BUF, PC+8
+                        status  <= BUF;
+                        pc_next <= pc_next + 32'd8;
+                    end
+                    else begin  // nopl && noph
+                        // 全 stall → PC 不变
+                        status  <= BUF_IH;
+                        pc_next <= pc_next;
+                    end
+                end
+
+                default: begin
+                    status  <= INST;
+                    pc_next <= 32'b0;
+                end
+
+            endcase
+        end
+    end
+
+endmodule

@@ -1,11 +1,8 @@
 不实现浮点指令。
-目前暂未实现、优化、流水线控制等，但为其留出了空间。
 ## signal bus
-理念：信号失效最早的放在高位，最晚被需要的放在低位
-如opcode,func在EX就失效，安排在最高位，regWrite在WB要用，安排在最低位。
-|jump|branch|memRead|memWrite|regWrite|
-|---|---|---|---|---|
-|4|3|2|1|0|
+
+|valu[6]|jump[5]|branch[4]|memRead[3]|memWrite[2]|regWrite[1]|high[0]|
+
 
 
 ## 信号命名规范
@@ -17,6 +14,7 @@
 若有槽位，必须是br或ls，分别代表branch和load/store。原槽0对应branch，槽1对应ls。（目前的架构，两个槽都兼容alu，但仅有其中的槽0可做branch，仅槽1可做load/store）若无槽位（例如全局信号），这一段名称可以不要。
 
 若有阶段，必须是下列中的一个：if,id,ex,mem,wb。分别对应流水线的五个阶段。对于任何信号，不论其在某个阶段是否被使用，都必须使用五个阶段名的其中一个。例如，槽0在mem阶段的信号阶段应当采用mem，而不是使用relay。若无阶段，可不要阶段名。
+若按照书本上的叫法，部分阶段名指的是从上一阶段传到这一阶段的名称。例如，ex指的是id/ex寄存器，即将id解码出的阶段在上升沿固化下来的寄存器。
 
 对于中间信号，可以不遵循命名此命名规范，但应当较为清晰地表达含义，并且以i_开头(i for intermediate)
 例如：对于原先的assign slot1_addr12 = sigs1_id[1] ? regs1_id[4:0] : regs1_id[14:10];这里的slot1_addr12可命名为i_readAddr2_ls

@@ -1,10 +1,10 @@
-//暂不考虑浮点运算，特权指令等，暂时仅完成基础指令集
+//不考虑浮点运算，暂不考虑特权指令等
 module Decoder (
     input wire [31:0] inst,
     output wire [9:0] opcode,
     output wire [6:0] func,
     output reg [31:0] imm,
-    // 寄存器地址 (rd=inst[4:0], rj=inst[9:5], rk=inst[14:10])
+    // 寄存器地址 并非直接解码出的地址，rd为目标寄存器，rj,rk为数据源寄存器
     output wire [4:0] rd,
     output wire [4:0] rj,
     output wire [4:0] rk,
@@ -12,9 +12,13 @@ module Decoder (
     output wire valid_rj,            // rj 字段有效 (指令用到 rj)
     output wire valid_rk,            // rk 字段有效 (指令用到 rk)
     output wire memRead, memWrite,
-    output wire branch,
+    output wire regWrite,
+    output wire branch, //需要比较的跳转
     output wire jump,   // branch以外的跳转
-    output wire regWrite
+    output wire alu,
+    output wire load,
+    output wire store,
+    output wire valu           // EX结果会被写入寄存器 (≠load, load的WB数据来自MEM)
 );
 
     // ============================================================
@@ -72,12 +76,16 @@ module Decoder (
     // ============================================================
     // 寄存器地址提取
     // ============================================================
-    // 除 I26 格式(B/BL)外，rd/rj 均固定在 inst[4:0]/inst[9:5]
-    // rk 仅在 3R 型指令中有效，其余格式该字段属于操作码/立即数
-    // 统一提取交由下游，由控制信号(regWrite等)来门控是否实际使用
-    assign rd = inst[4:0];
+    // rj 固定在 inst[9:5]
+    // rd:  store/branch无写回目标置0; BL写r1; 其余用 inst[4:0]
+    // rk:  store/branch的数据源在 inst[4:0]; 其余 3R 型用 inst[14:10]
+    wire rdIsSrc = isStore || isBranch;       // store/branch 把 rd 当源操作数
     assign rj = inst[9:5];
-    assign rk = inst[14:10];
+    assign rd = isBL      ? 5'd1         :
+                rdIsSrc   ? 5'b0         :
+                            inst[4:0];
+    assign rk = rdIsSrc   ? inst[4:0]    :
+                            inst[14:10];
 
     // ============================================================
     // 立即数生成
@@ -129,6 +137,12 @@ module Decoder (
     assign branch = isBranch;
     assign jump   = isB || isBL || isJIRL;
 
+    assign alu   = is3R_ALU || isALUimm || isShiftImm
+                || isLU12IW || isPCADDU12I;
+    assign load  = isLoad;
+    assign store = isStore;
+    assign valu  = regWrite && !isLoad;               // EX结果写回 (load的WB数据来自MEM)
+
     assign regWrite = is3R_ALU || isALUimm || isShiftImm  // ALU运算写回
                    || isLoad                               // 加载写回
                    || isBL || isJIRL                       // 链接跳转写回
@@ -137,9 +151,10 @@ module Decoder (
     // ============================================================
     // 寄存器字段有效性
     // ============================================================
-    assign valid_rd = regWrite && !isBL;         // BL写r1, 其余写rd
+    // 若本条指令中，rd是目标，rj,rk是数据源，则对应valid信号为真
+    assign valid_rd = regWrite;                // BL已设rd=1, 无需排除
     assign valid_rj = !(isLU12IW || isPCADDU12I  // 1RI21: inst[9:5]属si20
                      || isB || isBL);            // I26:  inst[9:5]属offs26
-    assign valid_rk = is3R_ALU;                  // 仅3R型用到rk
+    assign valid_rk = is3R_ALU || rdIsSrc;       // 3R型 或 rd作数据源(store/branch)
 
 endmodule

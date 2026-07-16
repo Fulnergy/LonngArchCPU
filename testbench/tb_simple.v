@@ -6,7 +6,7 @@ module tb_simple;
     // 参数
     // ============================================================
     parameter CLK_PERIOD = 10;          // 100MHz
-    parameter SIM_CYCLES = 30;         // 仿真周期数
+    parameter SIM_CYCLES = 40;         // 仿真周期数
 
     // ============================================================
     // 信号
@@ -18,7 +18,7 @@ module tb_simple;
     // DUT
     // ============================================================
     top #(
-        .IMEM_FILE ("bench_ls.mem")
+        .IMEM_FILE ("bench_forward.mem")
     ) u_top (
         .clk   (clk),
         .rst_n (rst_n)

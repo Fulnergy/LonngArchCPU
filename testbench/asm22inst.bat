@@ -18,6 +18,7 @@ if not exist "%asm_file%" (
 )
 
 echo 正在汇编: %asm_file%
+del "%base_name%.o" "%base_name%.elf" "%base_name%.bin" "%base_name%.mem" 2>nul
 loongarch64-linux-gnu-as -o "%base_name%.o" "%asm_file%"
 if errorlevel 1 (
     echo ❌ 汇编失败，请检查语法错误。

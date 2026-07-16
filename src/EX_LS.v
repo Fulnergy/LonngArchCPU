@@ -6,8 +6,8 @@ module EX_LS(
     input [6:0] func,            // inst[21:15]
     input [31:0] reg1,           // rj (基址 或 ALU操作数1)
     input [31:0] reg2,           // rk 或立即数 (ALU操作数2)
-    input [31:0] store_data,     // rd 值 (仅 store 时有效)
     input [31:0] imm,            // 解码后立即数
+    input [31:0] pc,             // 当前指令PC (供 pcaddu12i)
     output reg [31:0] alu_result,    // ALU结果 / 访存地址
     output mem_we,               // 存储器写使能
     output [1:0] mem_size,       // 00=byte, 01=halfword, 10=word
@@ -89,7 +89,7 @@ module EX_LS(
     assign mem_size = opcode[1:0];
 
     assign mem_we    = memWrite;
-    assign mem_wdata = store_data;
+    assign mem_wdata = reg2;
 
     // ============================================================
     // ALU 主逻辑 (与 EX_ALU 相同，但无分支/跳转)
@@ -109,7 +109,7 @@ module EX_LS(
             alu_result = imm;
         end
         else if (isPCADDU) begin
-            alu_result = reg1 + imm;    // 注意: PCADDU12I 用 pc, 但 slot1 无 pc
+            alu_result = pc + imm;
         end
         // ── ALU 运算 ──
         else begin

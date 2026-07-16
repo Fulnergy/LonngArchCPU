@@ -30,7 +30,7 @@ module Regs(
     // - r0 不可写入，始终保持 0
     // - 同周期双写冲突：slot1 优先 (后写入覆盖)
     // ============================================================
-    always @(posedge clk) begin
+    always @(negedge clk) begin
         if (en) begin
             if (regWrite0 && (write_addr0 != 5'b0))
                 regs[write_addr0] <= write_data0;
