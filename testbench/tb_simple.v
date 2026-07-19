@@ -18,7 +18,8 @@ module tb_simple;
     // DUT
     // ============================================================
     top #(
-        .IMEM_FILE ("bench_forward.mem")
+        .IMEM_FILE ("bench_fib.mem"),
+        .DMEM_FILE ("data.mem")
     ) u_top (
         .clk   (clk),
         .rst_n (rst_n)

@@ -42,7 +42,9 @@ module Decoder (
     
     // I型ALU (2RI12格式: SLTI/SLTUI/ADDI.W/ANDI/ORI/XORI)
     //   31:26 = 000000, 且 25:22 != 0000 以排除 3R 型
-    wire isALUimm   = (inst[31:26] == 6'b000000) && (inst[25:22] != 4'b0000);
+    wire isShiftImm = (inst[31:22] == 10'b0000000001);
+    wire isALUimm   = (inst[31:26] == 6'b000000) && (inst[25:22] != 4'b0000)
+                   && !isShiftImm;
     wire isANDI     = (inst[31:22] == 10'b0000001101);
     wire isORI      = (inst[31:22] == 10'b0000001110);
     wire isXORI     = (inst[31:22] == 10'b0000001111);
@@ -65,9 +67,6 @@ module Decoder (
     wire isB      = (inst[31:26] == 6'b010100);
     wire isBL     = (inst[31:26] == 6'b010101);
     wire isJIRL   = (inst[31:26] == 6'b010011);
-
-    // 移位立即数型 (SLLI.W/SRLI.W/SRAI.W)
-    wire isShiftImm = (inst[31:22] == 10'b0000000001);
 
     // 浮点条件分支
     // wire isBCEQZ  = (inst[31:26] == 6'b010010) && !inst[5];

@@ -8,7 +8,8 @@ module EX_ALU(
     input [31:0] imm,            // 解码后立即数
     input [31:0] pc,             // 当前指令PC
     output reg [31:0] alu_result,
-    output reg jump_taken,       // branch成功 或 jump 时为 1
+    output jump_taken,       // branch成功 或 jump 时为 1
+    output reg branch_taken, //仅当branch判定成功时为1
     output reg [31:0] jump_addr
 );
 
@@ -103,13 +104,12 @@ module EX_ALU(
     always @(*) begin
         if (!en) begin
             alu_result = 32'b0;
-            jump_taken = 1'b0;
+            branch_taken = 1'b0;
             jump_addr  = 32'b0;
         end
         // ── 跳转 (优先级最高) ──
         else if (jump) begin
-            jump_taken = 1'b1;
-
+            branch_taken = 1'b0;
             if (isB) begin
                 // B: 无条件跳, 无写回
                 alu_result = 32'b0;
@@ -132,34 +132,34 @@ module EX_ALU(
             jump_addr  = pc + imm;
 
             if (isBEQ)
-                jump_taken = (reg1 == reg2);
+                branch_taken = (reg1 == reg2);
             else if (isBNE)
-                jump_taken = (reg1 != reg2);
+                branch_taken = (reg1 != reg2);
             else if (isBLT)
-                jump_taken = ($signed(reg1) < $signed(reg2));
+                branch_taken = ($signed(reg1) < $signed(reg2));
             else if (isBGE)
-                jump_taken = ($signed(reg1) >= $signed(reg2));
+                branch_taken = ($signed(reg1) >= $signed(reg2));
             else if (isBLTU)
-                jump_taken = (reg1 < reg2);
+                branch_taken = (reg1 < reg2);
             else if (isBGEU)
-                jump_taken = (reg1 >= reg2);
+                branch_taken = (reg1 >= reg2);
             else
-                jump_taken = 1'b0;
+                branch_taken = 1'b0;
         end
         // ── 特殊立即数 ──
         else if (isLU12I) begin
-            jump_taken = 1'b0;
+            branch_taken = 1'b0;
             jump_addr  = 32'b0;
             alu_result = imm;               // {si20, 12'b0}
         end
         else if (isPCADDU) begin
-            jump_taken = 1'b0;
+            branch_taken = 1'b0;
             jump_addr  = 32'b0;
             alu_result = pc + imm;          // pc + {si20, 12'b0}
         end
         // ── ALU ──
         else begin
-            jump_taken = 1'b0;
+            branch_taken = 1'b0;
             jump_addr  = 32'b0;
 
             // --- 加法 ---
@@ -233,5 +233,7 @@ module EX_ALU(
                 alu_result = 32'b0;
         end
     end
+
+    assign jump_taken = jump || branch_taken;
 
 endmodule

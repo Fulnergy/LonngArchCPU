@@ -62,6 +62,13 @@ reg        signExt_ls_mem;               // load 符号扩展标志
 
 assign if_en = 1'b1;
 
+reg i_flush_id_delayed;
+
+always @(*) begin
+    if(~rst_n) i_flush_id_delayed<=1'b0;
+    else i_flush_id_delayed<=flush_id;
+end
+
 IF_Stage #(
     .IMEM_FILE (IMEM_FILE)
 ) uif (
@@ -127,6 +134,8 @@ reg [31:0] imm_br_ex, imm_ls_ex;
 reg [31:0] pc_low_ex;
 reg [31:0] regData_rj_br_ex, regData_rk_br_ex;          // 槽0 寄存器值 (流水线后)
 reg [31:0] regData_rj_ls_ex, regData2_ls_ex;          // 槽1 寄存器值 (流水线后: rj, rk/rd*)
+wire        branch_taken_br_ex;           // EX_ALU 分支判定结果
+wire        flush_id, flush_ex, flush_ls_mem;  // 流水线冲刷
 
 
 // ── EX 级信号 ──
@@ -141,7 +150,7 @@ wire [31:0] memWdata_ls_ex;             // 写入存储器的数据
 
 
 always @(posedge clk) begin
-    if (!rst_n) begin
+    if (!rst_n || flush_ex) begin
         sigBus_br_ex <= 7'b0;
         sigBus_ls_ex <= 7'b0;
         regAddr_rd_br_ex <= 5'b0;
@@ -272,6 +281,7 @@ EX_ALU uea(
     .pc(sigBus_br_ex[0] ? (pc_low_ex + 32'd4) : pc_low_ex),
     .alu_result(aluResult_br_ex),
     .jump_taken(jumpTaken_br_ex),
+    .branch_taken(branch_taken_br_ex),
     .jump_addr(jumpAddr_br_ex)
 );
 
@@ -299,7 +309,7 @@ inst_controll uic(
     .nopl           (nopl),
     .noph           (noph),
     .pc_jump        (jumpAddr_br_ex),
-    .dual_inst_raw  (dual_inst_raw),
+    .dual_inst_raw  (i_flush_id_delayed ? 64'b0 : dual_inst_raw),
     .pc_next        (pc_next),
     .pc_low         (pc_low_id),
     .dual_inst      (dual_inst)
@@ -311,8 +321,6 @@ inst_controll uic(
 wire loadSignExt_ls_ex = opcode_ls_ex[3];
 
 
-wire [31:0] memRdata_ls_mem;                // load 读回数据
-
 always @(posedge clk) begin
     if (!rst_n) begin
         sigBus_br_mem     <= 7'b0;
@@ -323,22 +331,36 @@ always @(posedge clk) begin
         aluResult_br_mem  <= 32'b0;
         aluResult_ls_mem  <= 32'b0;
         memWrite_ls_mem   <= 1'b0;
+        memSize_ls_mem    <= 2'b0;
+        memAddr_ls_mem    <= 32'b0;
         memWdata_ls_mem   <= 32'b0;
+        signExt_ls_mem    <= 1'b0;
         regWrite_br_wb    <= 1'b0;
         regWrite_ls_wb    <= 1'b0;
         high_br_wb        <= 1'b0;
         high_ls_wb        <= 1'b0;
     end else begin
-    // ── 槽0: EX → relay → WB (NBA 保证 relay→wb_* 差 1 拍) ──
+    // ── 槽0: EX → relay → WB (不受 flush_ls_mem 影响) ──
     regAddr_rd_br_mem  <= regAddr_rd_br_ex;
     aluResult_br_mem <= aluResult_br_ex;
     sigBus_br_mem     <= sigBus_br_ex;
-    regAddr_rd_br_wb  <= regAddr_rd_br_mem;           // 直接写 WB 端口
+    regAddr_rd_br_wb  <= regAddr_rd_br_mem;
     regData_br_wb  <= aluResult_br_mem;
     regWrite_br_wb     <= sigBus_br_mem[1];
     high_br_wb        <= sigBus_br_mem[0];
 
     // ── 槽1: EX → MEM ──
+    if (flush_ls_mem) begin
+        sigBus_ls_mem     <= 7'b0;
+        memWrite_ls_mem   <= 1'b0;
+        memSize_ls_mem    <= 2'b0;
+        memAddr_ls_mem    <= 32'b0;
+        memWdata_ls_mem   <= 32'b0;
+        regAddr_rd_ls_mem <= 5'b0;
+        regAddr_rk_ls_mem <= 5'b0;
+        aluResult_ls_mem  <= 32'b0;
+        signExt_ls_mem    <= 1'b0;
+    end else begin
     memWrite_ls_mem    <= memWrite_ls_ex;
     memSize_ls_mem  <= memSize_ls_ex;
     memAddr_ls_mem  <= aluResult_ls_ex;
@@ -350,6 +372,7 @@ always @(posedge clk) begin
     sigBus_ls_mem     <= sigBus_ls_ex;
     signExt_ls_mem   <= loadSignExt_ls_ex;
     end
+    end
 end
 
 // ============================================================
@@ -359,7 +382,10 @@ end
 reg [31:0] aluResult_ls_wb;                 // ALU 结果 (非 load 时写回)
 reg        memRead_ls_wb;                // load 标志 (mux 选择)
 reg        loadSignExt_ls_wb;                // 符号扩展标志
-reg [31:0] memRdata_ls_wb;              // dmem 读出数据
+wire [31:0] memRdata_ls_wb;              // dmem 读出数据
+reg [1:0]  memSize_ls_wb;                // 访存宽度 (传递到 WB)
+reg        signExt_ls_wb;                 // 符号扩展标志 (传递到 WB)
+reg [1:0]  memAddr_low_wb;                // data_addr[1:0] (延迟1拍, 读对齐用)
 
 always @(posedge clk) begin
     if (!rst_n) begin
@@ -368,7 +394,9 @@ always @(posedge clk) begin
         memRead_ls_wb     <= 1'b0;
         regAddr_rd_ls_wb  <= 5'b0;
         aluResult_ls_wb   <= 32'b0;
-        memRdata_ls_wb    <= 32'b0;
+        memSize_ls_wb     <= 2'b0;
+        signExt_ls_wb     <= 1'b0;
+        memAddr_low_wb    <= 2'b0;
     end else begin
     regAddr_rd_ls_wb    <= regAddr_rd_ls_mem;          // 直接写 WB 端口
     regWrite_ls_wb       <= sigBus_ls_mem[1];
@@ -376,7 +404,9 @@ always @(posedge clk) begin
     aluResult_ls_wb    <= aluResult_ls_mem;
     memRead_ls_wb   <= sigBus_ls_mem[3];
     loadSignExt_ls_wb   <= signExt_ls_mem;
-    memRdata_ls_wb <= memRdata_ls_mem;
+    memSize_ls_wb       <= memSize_ls_mem;
+    signExt_ls_wb       <= signExt_ls_mem;
+    memAddr_low_wb      <= memAddr_ls_mem[1:0];
     end
 end
 
@@ -392,9 +422,9 @@ wire        fwd_mem_br   = sigBus_br_mem[6] && sigBus_br_mem[1]
 wire        fwd_mem_load = sigBus_ls_mem[3] && (regAddr_rk_ls_mem == regAddr_rd_ls_mem);
 wire        fwd_mem_both = fwd_mem_br && fwd_mem_load;
 
-assign i_memWdata_final = fwd_mem_both ? (sigBus_ls_mem[0] ? memRdata_ls_mem : aluResult_br_mem) :
+assign i_memWdata_final = fwd_mem_both ? (sigBus_ls_mem[0] ? memRdata_ls_wb : aluResult_br_mem) :
                           fwd_mem_br   ? aluResult_br_mem :
-                          fwd_mem_load ? memRdata_ls_mem :
+                          fwd_mem_load ? memRdata_ls_wb :
                                          memWdata_ls_mem;
 
 
@@ -407,16 +437,29 @@ MEM_Stage #(
 ) umem (
     .clk        (clk),
     .wr_en      (memWrite_ls_mem),
-    .signExt    (signExt_ls_mem),
     .mem_size   (memSize_ls_mem),
-    .data_addr  (memAddr_ls_mem[16:0]),    // 字节地址 (17b → 128KB)
+    .data_addr  (memAddr_ls_mem[16:0]),
     .write_data (i_memWdata_final),
-    .read_data  (memRdata_ls_mem)
+    .signExt_wb (signExt_ls_wb),
+    .mem_size_wb(memSize_ls_wb),
+    .addr_low_wb(memAddr_low_wb),
+    .read_data  (memRdata_ls_wb)
 );
 
 // ============================================================
 // WB 级写回 (regData_ls_wb 为 mux 输出, 其余端口由寄存器直接驱动)
 // ============================================================
 assign regData_ls_wb = memRead_ls_wb ? memRdata_ls_wb : aluResult_ls_wb;
+
+// ============================================================
+// 流水线控制 (分支冲刷)
+// ============================================================
+pipeline_controll upipe_ctrl (
+    .branch_taken (jumpTaken_br_ex), //暂定：无条件跳转地址于ex计算，故也要刷两级，等同branch_taken
+    .high_ls_mem  (sigBus_ls_ex[0]),
+    .flush_id     (flush_id),
+    .flush_ex     (flush_ex),
+    .flush_ls_mem (flush_ls_mem)
+);
 
 endmodule

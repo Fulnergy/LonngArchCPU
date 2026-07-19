@@ -3,141 +3,139 @@
 # ============================================================
 
 # ── 初始化 ──
-    addi.w  r1, r0, 5
-    addi.w  r2, r0, 5
-    addi.w  r3, r0, 3
-    addi.w  r4, r0, 7
+    addi.w  $r1, $r0, 5
+    addi.w  $r2, $r0, 5
+    addi.w  $r3, $r0, 3
+    addi.w  $r4, $r0, 7
 
 # ── 等待写回 ──
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
+    addi.w  $r0, $r0, 0
+    addi.w  $r0, $r0, 0
+    addi.w  $r0, $r0, 0
+    addi.w  $r0, $r0, 0
+    addi.w  $r0, $r0, 0
+    addi.w  $r0, $r0, 0
 
 # ============================================================
-# BEQ: r1==r2 → 应跳转
+# BEQ: $r1==r2 → 应跳转
 # ============================================================
-    beq     r1, r2,  8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 1
-    addi.w  r0, r0, 0
-    b       24
-    addi.w  r0, r0, 0
+    beq     $r1, $r2,  case2
+    addi.w  $r0, $r0, 0
+    addi.w  $r10, $r0, 1
+    addi.w  $r0, $r0, 0
 
-# ── BEQ: r1!=r3 → 不应跳转 ──
-    beq     r1, r3, 24
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 0
-    addi.w  r0, r0, 0
-
-# ============================================================
-# BNE: r1!=r3 → 应跳转
-# ============================================================
-    bne     r1, r3,  8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 2
-    addi.w  r0, r0, 0
-    b       16
-    addi.w  r0, r0, 0
-
-# ── BNE: r1==r2 → 不应跳转 ──
-    bne     r1, r2, 16
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 0
-    addi.w  r0, r0, 0
+# ── BEQ: $r1!=r3 → 不应跳转 ──
+    case2:
+    beq     $r1, $r3, case3
+    addi.w  $r0, $r0, 0
+    addi.w  $r11, $r0, 2
+    addi.w  $r0, $r0, 0
 
 # ============================================================
-# BLT: r3(3) < r1(5) 有符号 → 应跳转
+# BNE: $r1!=r3 → 应跳转
 # ============================================================
-    blt     r3, r1,  8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 3
-    addi.w  r0, r0, 0
-    b        8
-    addi.w  r0, r0, 0
+    case3:
+    bne     $r1, $r3,  case4
+    addi.w  $r0, $r0, 0
+    addi.w  $r12, $r0, 3
+    addi.w  $r0, $r0, 0
 
-# ── BGE: r1(5) >= r3(3) → 应跳转 ──
-    bge     r1, r3,  8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 4
-    addi.w  r0, r0, 0
-    b        8
-    addi.w  r0, r0, 0
+# ── BNE: $r1==r2 → 不应跳转 ──
+    case4:
+    bne     $r1, $r2, case5
+    addi.w  $r0, $r0, 0
+    addi.w  $r13, $r0, 4
+    addi.w  $r0, $r0, 0
 
 # ============================================================
-# BLTU: r3(3) < r4(7) 无符号 → 应跳转
+# BLT: $r3(3) < $r1(5) 有符号 → 应跳转
 # ============================================================
-    bltu    r3, r4,  8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 5
-    addi.w  r0, r0, 0
-    b        8
-    addi.w  r0, r0, 0
+    case5:
+    blt     $r3, $r1,  case6
+    addi.w  $r0, $r0, 0
+    addi.w  $r14, $r0, 5
+    addi.w  $r0, $r0, 0
 
-# ── BGEU: r4(7) >= r3(3) → 应跳转 ──
-    bgeu    r4, r3,  8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 6
-    addi.w  r0, r0, 0
-    b        8
-    addi.w  r0, r0, 0
+# ── BGE: $r1(5) >= $r3(3) → 应跳转 ──
+    case6:
+    bge     $r1, $r3,  case7
+    addi.w  $r0, $r0, 0
+    addi.w  $r15, $r0, 6
+    addi.w  $r0, $r0, 0
+
+# ============================================================
+# BLTU: $r3(3) < $r4(7) 无符号 → 应跳转
+# ============================================================
+    case7:
+    bltu    $r3, $r4,  case8
+    addi.w  $r0, $r0, 0
+    addi.w  $r16, $r0, 7
+    addi.w  $r0, $r0, 0
+
+# ── BGEU: $r4(7) >= $r3(3) → 应跳转 ──
+    case8:
+    bgeu    $r4, $r3,  case9
+    addi.w  $r0, $r0, 0
+    addi.w  $r17, $r0, 8
+    addi.w  $r0, $r0, 0
 
 # ============================================================
 # B 无条件跳转
 # ============================================================
-    b        8
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 7
-    addi.w  r0, r0, 0
-    b        8
-    addi.w  r0, r0, 0
+    case9:
+    b       case10
+    addi.w  $r0, $r0, 0
+    addi.w  $r18, $r0, 9
+    addi.w  $r0, $r0, 0
 
 # ============================================================
-# BL: 跳转并保存返回地址到 r1
+# BL: 跳转并保存返回地址到 $r1
 # ============================================================
-    bl      16
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
-    addi.w  r0, r0, 0
-    addi.w  r10, r0, 8
-    addi.w  r0, r0, 0
-    b       fail
-    addi.w  r0, r0, 0
+    case10:
+    #bl      return
+    #addi.w  $r0, $r0, 0
+    #addi.w  $r0, $r0, 0
+    #addi.w  $r0, $r0, 0
+    #addi.w  $r19, $r0, 10
+    #addi.w  $r0, $r0, 0
 
-# BL返回点
-    addi.w  r11, r1, 0
-    addi.w  r0, r0, 0
+    #return:
+    #addi.w  $r0, $r0, 0
+    #addi.w  $r0, $r0, 0
 
 # ============================================================
-# JIRL: 通过 r5 间接跳转, r6 存返回地址
+# JIRL: 通过 $r5 间接跳转, $r6 存返回地址
 # ============================================================
-    pcaddu12i r5, 0
-    addi.w    r0, r0, 0
-    addi.w    r5, r5, 24
-    addi.w    r0, r0, 0
-    addi.w    r0, r0, 0
-    addi.w    r0, r0, 0
-    addi.w    r0, r0, 0
-    addi.w    r0, r0, 0
-    addi.w    r0, r0, 0
-    addi.w    r0, r0, 0
-    jirl      r6, r5, 0
-    addi.w    r0, r0, 0
-    addi.w    r10, r0, 9
-    addi.w    r0, r0, 0
-    b         fail
-    addi.w    r0, r0, 0
+    #pcaddu12i $r5, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r5, $r5, 24
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r0, $r0, 0
+    #jirl      $r6, $r5, 0
+    #addi.w    $r0, $r0, 0
+    #addi.w    $r10, $r0, 9
+    #addi.w    $r0, $r0, 0
+    #b         fail
+    #addi.w    $r0, $r0, 0
 
 # JIRL 目标: 全部通过
-    addi.w    r10, r0, 0
-    addi.w    r0, r0, 0
+    #addi.w    $r10, $r0, 0
+    #addi.w    $r0, $r0, 0
 
 # ============================================================
 success:
-    b         success
-    addi.w    r0, r0, 0
+    #b         success
+    #addi.w    $r0, $r0, 0
 fail:
-    b         fail
-    addi.w    r0, r0, 0
+    #b         fail
+    #addi.w    $r0, $r0, 0
+    
+
+end:
+    b          end
+    addi.w     $r0, $r0, 0

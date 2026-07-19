@@ -80,11 +80,13 @@ module ID_Stage(
     // ============================================================
     wire ls0 = memRead0 || memWrite0;
     wire ls1 = memRead1 || memWrite1;
+    wire br0 = jump0 || branch0;
+    wire br1 = jump1 || branch1;
 
     wire conflict_ls = ls0 && ls1;          // 双 LS → 只有槽1能跑, 移槽0→槽1
-    wire conflict_br = branch0 && branch1;          // 双 Branch → 只有槽0能跑, 废弃槽1
+    wire conflict_br = br0 && br1;          // 双 Branch → 只有槽0能跑, 废弃槽1
     wire swap_ls     = ls0 && !ls1;          // 槽0=LS, 槽1≠LS → 交换(LS→槽1)
-    wire swap_br     = branch1 && !branch0;          // 槽1=BR, 槽0≠BR → 交换(BR→槽0)
+    wire swap_br     = br1 && !br0;          // 槽1=BR, 槽0≠BR → 交换(BR→槽0)
 
     // ============================================================
     // 上一拍发射记录传递
