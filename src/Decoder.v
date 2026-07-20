@@ -151,7 +151,7 @@ module Decoder (
     // 寄存器字段有效性
     // ============================================================
     // 若本条指令中，rd是目标，rj,rk是数据源，则对应valid信号为真
-    assign valid_rd = regWrite;                // BL已设rd=1, 无需排除
+    assign valid_rd = regWrite && (rd != 5'b0);                // BL已设rd=1, 无需排除
     assign valid_rj = !(isLU12IW || isPCADDU12I  // 1RI21: inst[9:5]属si20
                      || isB || isBL);            // I26:  inst[9:5]属offs26
     assign valid_rk = is3R_ALU || rdIsSrc;       // 3R型 或 rd作数据源(store/branch)

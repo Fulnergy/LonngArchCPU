@@ -10,9 +10,16 @@ module inst_controll(
     output [63:0] dual_inst //输出给ID的指令
 );
 
+parameter NOP = 32'h03400000;
+
 reg [31:0] left;//之前剩的指令，若没剩则不需要有
 reg take;//是否使用之前剩的
-reg [31:0] pc_last;
+reg [31:0] pc_last;//当前拍的dual_inst_raw中低位指令对应的pc
+//在当前架构下，双指令理应8byte对齐，但跳转时目标仅确保4byte对齐
+wire misaligned = pc_last[2];
+//仅一种情况会未准备好：跳转之后，目标pc是双指令的高位。
+//此时没有对齐，输入的dual_inst的低位是无效的。
+//解决方案是，将输入指令的高位作为输出指令的低位，并将高位填充nop
 
 //pc控制
 always @(*) begin
@@ -25,6 +32,9 @@ always @(*) begin
     //都不发射，或这次只要一条，且正好之前有剩的一条，则不需要往后取
     else if(nopl||noph&&take)begin
         pc_next=pc_last;
+    end
+    else if(misaligned)begin
+        pc_next=pc_last+4;
     end
     //否则向后取两条指令
     else begin
@@ -42,19 +52,18 @@ always @(posedge clk) begin
 end
 
 // ============================================================
-// take / left 状态机 (决定下一拍的 dual_inst 拼接方式)
+// 信号裁定 (决定下一拍的 dual_inst 拼接方式)
 // ============================================================
-// 调度约束: 仅当双branch或双ls时，只取一条指令
-//          必定是低位指令运行，高位被保存
+// 调度约束: 必定是低位指令运行，高位被保存
 // ============================================================
 always @(posedge clk) begin
     if(~rst_n)begin
         take<=1'b0;
-        left<=32'b0;
+        left<=NOP;
     end
     else if(jump_taken) begin
         take<=1'b0;
-        left<=32'b0;
+        left<=NOP;
     end
     else if(nopl) begin
         take<=take;
@@ -67,11 +76,12 @@ always @(posedge clk) begin
     end
     else begin
         take<=1'b0;
-        left<=32'b0;
+        left<=NOP;
     end
 end
 
-assign dual_inst = take ? {dual_inst_raw[31:0],left} : dual_inst_raw;
+assign dual_inst = misaligned ? {NOP,dual_inst_raw[63:32]} :
+                   take       ? {dual_inst_raw[31:0],left}   : dual_inst_raw;
 //实际运行时，这一拍的双指令按规则取出并给到ID
 //随后ID解出的结果(nop)再返回本模块，通过上述always块决定下一拍如何解
 

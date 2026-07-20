@@ -45,6 +45,7 @@ module tb_simple;
     // ============================================================
     initial begin
         #(CLK_PERIOD * SIM_CYCLES);
+        $writememh("result.mem", u_top.umem.u_dmem.mem);
         $display("=== Simulation finished after %0d cycles ===", SIM_CYCLES);
         $finish;
     end

@@ -9,6 +9,8 @@ module top #(
     input rst_n
 );
 
+parameter NOP = 32'h03400000;
+
 // ── PC & IF 信号 ──
 wire [31:0] pc_next;                    // inst_controll 输出的下一 PC
 wire [63:0] dual_inst_raw;              // IF 取出的原始指令对
@@ -309,7 +311,7 @@ inst_controll uic(
     .nopl           (nopl),
     .noph           (noph),
     .pc_jump        (jumpAddr_br_ex),
-    .dual_inst_raw  (i_flush_id_delayed ? 64'b0 : dual_inst_raw),
+    .dual_inst_raw  (i_flush_id_delayed ? {NOP,NOP} : dual_inst_raw),
     .pc_next        (pc_next),
     .pc_low         (pc_low_id),
     .dual_inst      (dual_inst)
