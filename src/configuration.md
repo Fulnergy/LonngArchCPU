@@ -4,6 +4,12 @@
 |valu[6]|jump[5]|branch[4]|memRead[3]|memWrite[2]|regWrite[1]|high[0]|
 
 
+## csrbus
+|csreg[16:3]|xchg[2]|csrwr[1]|csrrd[0]|
+xchg: 是xchg指令
+csrwr: 是csrwr指令
+xchg || csrwr: 是csr写入指令
+csrrd: 是csr读取指令
 
 ## 信号命名规范
 信号名(_副信号名)(_槽位)(_阶段)

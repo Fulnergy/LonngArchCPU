@@ -7,11 +7,16 @@
 module ID_Stage(
     input clk,
     input [63:0] dual_inst,
+    input [31:0] pc_low,          // 当前双指令中低 PC (供 ADEF 检测)
+    input plv0;
     output [9:0] opc0, opc1,        // opcode
     output [6:0] func0, func1,      // func
     output [31:0] imm0, imm1,
-    output [14:0] regs0, regs1,     // {rk, rj, rd}//|valu[6]|jump[5]|branch[4]|memRead[3]|memWrite[2]|regWrite[1]|high[0]|
-    output [6:0] sigs0, sigs1,
+    output [14:0] regs0, regs1,     // {rk, rj, rd}
+    output [6:0] sigs0, sigs1,      // |valu[6]|jump[5]|branch[4]|memRead[3]|memWrite[2]|regWrite[1]|high[0]|
+    output [16:0] csrBus0, csrBus1,  // |csreg[13:0]|xchg|csrwr|csrrd|
+    output        evalid0, evalid1,
+    output [5:0]  ecode0, ecode1,
     output nopl, noph               //若低位(pc较小)的指令未发射，则nopl为1;noph代表高位，同理
 );
 
@@ -29,10 +34,14 @@ module ID_Stage(
     wire        alu1, load1, store1, valu1;
     wire        vrd0, vrj0, vrk0;
     wire        vrd1, vrj1, vrk1;
+    wire [16:0] csr0, csr1;
+    wire        evalid0_raw, evalid1_raw;
+    wire [5:0]  ecode0_raw, ecode1_raw;
 
     //这里的信号记作0,1，实际上，它们指的是低位和高位指令解码出的结果，不一定是槽0槽1最终发射的信号
     Decoder ud0(
         .inst(dual_inst[31:0]),
+        .plv0(plv0),
         .opcode(raw_opc0),
         .func(raw_func0),
         .imm(raw_imm0),
@@ -50,11 +59,17 @@ module ID_Stage(
         .alu(alu0),
         .load(load0),
         .store(store0),
-        .valu(valu0)
+        .valu(valu0),
+        .csrBus(csr0),
+        .evalid_in(1'b0),       // 低位指令无上游 ADEF
+        .ecode_in(6'b0),
+        .evalid(evalid0_raw),
+        .ecode(ecode0_raw)
     );
 
     Decoder ud1(
         .inst(dual_inst[63:32]),
+        .plv0(plv0),
         .opcode(raw_opc1),
         .func(raw_func1),
         .imm(raw_imm1),
@@ -72,8 +87,18 @@ module ID_Stage(
         .alu(alu1),
         .load(load1),
         .store(store1),
-        .valu(valu1)
+        .valu(valu1),
+        .csrBus(csr1),
+        .evalid_in(1'b0),
+        .ecode_in(6'b0),
+        .evalid(evalid1_raw),
+        .ecode(ecode1_raw)
     );
+
+    // ============================================================
+    // ADEF 检测: PC 未 4 字节对齐
+    // ============================================================
+    wire adef = (pc_low[1:0] != 2'b0);
 
     // ============================================================
     // 冲突检测信号
@@ -83,10 +108,12 @@ module ID_Stage(
     wire br0 = jump0 || branch0;
     wire br1 = jump1 || branch1;
 
-    wire conflict_ls = ls0 && ls1;          // 双 LS → 只有槽1能跑, 移槽0→槽1
-    wire conflict_br = br0 && br1;          // 双 Branch → 只有槽0能跑, 废弃槽1
-    wire swap_ls     = ls0 && !ls1;          // 槽0=LS, 槽1≠LS → 交换(LS→槽1)
-    wire swap_br     = br1 && !br0;          // 槽1=BR, 槽0≠BR → 交换(BR→槽0)
+    wire conflict_ls  = ls0 && ls1;          // 双 LS → 只有槽1能跑, 移槽0→槽1
+    wire conflict_br  = br0 && br1;          // 双 Branch → 只有槽0能跑, 废弃槽1
+    wire conflict_csr = (|csr0[2:1]) && (|csr1[2:1]);  // 双 CSR 写 → 只发低位
+    wire swap_ls      = ls0 && !ls1;          // 槽0=LS, 槽1≠LS → 交换(LS→槽1)
+    wire swap_br      = br1 && !br0;          // 槽1=BR, 槽0≠BR → 交换(BR→槽0)
+    wire swap_csr     = (|csr1[2:1]) && !(|csr0[2:1]);  // 槽1=CSR写, 槽0无 → 交换(CSR→槽0)
 
     // ============================================================
     // 上一拍发射记录传递
@@ -128,31 +155,35 @@ module ID_Stage(
     //这样这一拍就不会发射这条指令，到了下一拍，inst_controll会取出未发射的内容，再次处理这条指令
 
     assign nopl = dep09;
-    assign noph = dep10 || dep19 || conflict_ls || conflict_br;
+    assign noph = dep10 || dep19 || conflict_ls || conflict_br || conflict_csr;
 
-    reg [70:0] bus0,bus1;
-    wire [69:0] busl = {raw_opc0,raw_func0,raw_imm0,rk0,rj0,rd0,valu0,jump0,branch0,memRead0,memWrite0,regWrite0};
-    wire [69:0] bush = {raw_opc1,raw_func1,raw_imm1,rk1,rj1,rd1,valu1,jump1,branch1,memRead1,memWrite1,regWrite1};
+    reg [94:0] bus0,bus1;
+    wire [93:0] busl = {raw_opc0,raw_func0,raw_imm0,rk0,rj0,rd0,valu0,jump0,branch0,memRead0,memWrite0,regWrite0,csr0,evalid0_raw,ecode0_raw};
+    wire [93:0] bush = {raw_opc1,raw_func1,raw_imm1,rk1,rj1,rd1,valu1,jump1,branch1,memRead1,memWrite1,regWrite1,csr1,evalid1_raw,ecode1_raw};
 
 
     always @(*) begin
         if(nopl)begin
-            bus0 = 71'b0;
-            bus1 = 71'b0;
+            bus0 = 95'b0;
+            bus1 = 95'b0;
         end
         else if(noph)begin
-            if(branch0)begin
-                bus0 = {busl,1'b1};
-                bus1 = 71'b0;
+            if(ls0)begin
+                bus0 = 95'b0;
+                bus1 = {busl,1'b0};
             end
             else begin
-                bus0 = 71'b0;
-                bus1 = {busl,1'b1};
+                bus0 = {busl,1'b0};
+                bus1 = 95'b0;
             end
+        end
+        else if(adef)begin         // ADEF: 强制双 NOP + 异常
+            bus0 = {busl[93:7], 1'b1, 6'h08, 1'b0};
+            bus1 = {bush[93:7], 1'b1, 6'h08, 1'b1};
         end
         else begin
             //sigbus中的high信号，表示若双发射，当前槽是否pc更高
-            if(swap_ls || swap_br)begin
+            if(swap_ls || swap_br || swap_csr)begin
                 bus0 = {bush,1'b1};
                 bus1 = {busl,1'b0};
             end
@@ -163,8 +194,8 @@ module ID_Stage(
         end
     end
 
-    assign {opc0,func0,imm0,regs0,sigs0} = bus0;
-    assign {opc1,func1,imm1,regs1,sigs1} = bus1;
+    assign {opc0,func0,imm0,regs0,sigs0,csrBus0,evalid0,ecode0} = bus0;
+    assign {opc1,func1,imm1,regs1,sigs1,csrBus1,evalid1,ecode1} = bus1;
     
 
 endmodule

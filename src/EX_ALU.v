@@ -7,7 +7,11 @@ module EX_ALU(
     input [31:0] reg1, reg2,     // 寄存器值 (rj, rk/rd)
     input [31:0] imm,            // 解码后立即数
     input [31:0] pc,             // 当前指令PC
+    input [31:0] csr_read,       // CSR 读出的旧值
+    input [16:0] csrBus,         // CSR 控制总线
+    input [31:0] era, prmd,      // 异常返回信息
     output reg [31:0] alu_result,
+    output [31:0] csr_result,    // 将写入 CSR 的值
     output jump_taken,       // branch成功 或 jump 时为 1
     output reg branch_taken, //仅当branch判定成功时为1
     output reg [31:0] jump_addr
@@ -107,7 +111,19 @@ module EX_ALU(
             branch_taken = 1'b0;
             jump_addr  = 32'b0;
         end
-        // ── 跳转 (优先级最高) ──
+        // ── ERTN: 跳转至 ERA ──
+        else if (isERTN) begin
+            alu_result   = 32'b0;
+            branch_taken = 1'b0;
+            jump_addr    = era;
+        end
+        // ── CSR 操作 (优先级最高, 读回值写入 GPR) ──
+        else if (is_csr) begin
+            alu_result   = csr_read;
+            branch_taken = 1'b0;
+            jump_addr    = 32'b0;
+        end
+        // ── 跳转 ──
         else if (jump) begin
             branch_taken = 1'b0;
             if (isB) begin
@@ -235,5 +251,22 @@ module EX_ALU(
     end
 
     assign jump_taken = jump || branch_taken;
+
+    // ============================================================
+    // ERTN 检测: jump=1, csrwr=1, addr=CRMD
+    // ============================================================
+    wire isERTN = jump && csrBus[1] && (csrBus[16:3] == 14'h0);
+
+    // ============================================================
+    // CSR 操作: csr_result = 将写入 CSR 的值
+    //   CSRWR:  rd 值直写
+    //   CSRXCHG: (rd & rj) | (旧CSR & ~rj), rj 为掩码
+    // ============================================================
+    wire is_csr    = |csrBus[2:0];
+    wire is_csrwr  = csrBus[1];
+    wire [31:0] csr_wdata_raw = isERTN   ? {29'b0, prmd[2], prmd[1:0]}  // PRMD→CRMD
+                               : is_csrwr ? reg2
+                               : (reg2 & reg1) | (csr_read & ~reg1);
+    assign csr_result = (is_csr || isERTN) ? csr_wdata_raw : 32'b0;
 
 endmodule

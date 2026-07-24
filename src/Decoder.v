@@ -1,6 +1,9 @@
 //不考虑浮点运算，暂不考虑特权指令等
 module Decoder (
     input wire [31:0] inst,
+    input wire plv0,
+    input wire       evalid_in,    // 上游异常 (ADEF)
+    input wire [5:0] ecode_in,
     output wire [9:0] opcode,
     output wire [6:0] func,
     output reg [31:0] imm,
@@ -18,7 +21,10 @@ module Decoder (
     output wire alu,
     output wire load,
     output wire store,
-    output wire valu           // EX结果会被写入寄存器 (≠load, load的WB数据来自MEM)
+    output wire valu,           // EX结果会被写入寄存器 (≠load, load的WB数据来自MEM)
+    output wire [16:0] csrBus,     // |csreg[13:0]|xchg|csrwr|csrrd|
+    output wire        evalid,      // 本条指令异常
+    output wire [5:0]  ecode        // 异常编码
 );
 
     // ============================================================
@@ -72,19 +78,24 @@ module Decoder (
     // wire isBCEQZ  = (inst[31:26] == 6'b010010) && !inst[5];
     // wire isBCNEZ  = (inst[31:26] == 6'b010010) && inst[5];
 
+    //特权级指令
+    wire isCSR    = (inst[31:24] == 8'b00000100);       // CSR 指令类型
+    wire doCSR    = isCSR && plv0;                      // 实际执行 CSR (需内核态)
+    wire isERTN   = (inst[31:15] == 17'b00000000001011110) && plv0;  // 异常返回
+
     // ============================================================
     // 寄存器地址提取
     // ============================================================
     // rj 固定在 inst[9:5]
     // rd:  store/branch无写回目标置0; BL写r1; 其余用 inst[4:0]
     // rk:  store/branch的数据源在 inst[4:0]; 其余 3R 型用 inst[14:10]
-    wire rdIsSrc = isStore || isBranch;       // store/branch 把 rd 当源操作数
+    wire rdIsSrc = isStore || isBranch;       // 仅限普通指令，概因csr指令既作源又作目标
     assign rj = inst[9:5];
     assign rd = isBL      ? 5'd1         :
                 rdIsSrc   ? 5'b0         :
                             inst[4:0];
-    assign rk = rdIsSrc   ? inst[4:0]    :
-                            inst[14:10];
+    assign rk = rdIsSrc || doCSR  ? inst[4:0]    :
+                                    inst[14:10];
 
     // ============================================================
     // 立即数生成
@@ -128,32 +139,60 @@ module Decoder (
     // 3R型ALU (排除BREAK/SYSCALL)
     wire isBREAK   = (inst[31:15] == 17'b00000000001010100);
     wire isSYSCALL = (inst[31:15] == 17'b00000000001010110);
-    wire is3R_ALU  = (inst[31:22] == 10'b0000000000) && !isBREAK && !isSYSCALL;
+    wire is3R_ALU  = (inst[31:22] == 10'b0000000000) && !isBREAK && !isSYSCALL && !isERTN;
 
     assign memRead  = isLoad;
     assign memWrite = isStore;
 
     assign branch = isBranch;
-    assign jump   = isB || isBL || isJIRL;
+    assign jump   = isB || isBL || isJIRL || isERTN;
 
     assign alu   = is3R_ALU || isALUimm || isShiftImm
                 || isLU12IW || isPCADDU12I;
     assign load  = isLoad;
     assign store = isStore;
-    assign valu  = regWrite && !isLoad;               // EX结果写回 (load的WB数据来自MEM)
+    assign valu  = regWrite && !isLoad && !doCSR;               // EX结果写回 (load的WB数据来自MEM)
 
-    assign regWrite = is3R_ALU || isALUimm || isShiftImm  // ALU运算写回
+    assign regWrite = is3R_ALU || isALUimm || isShiftImm   // ALU运算写回
                    || isLoad                               // 加载写回
                    || isBL || isJIRL                       // 链接跳转写回
-                   || isLU12IW || isPCADDU12I;             // 立即数装载
+                   || isLU12IW || isPCADDU12I              // 立即数装载
+                   || doCSR                                // CSR写入      
+
+    wire csrrd = doCSR;                             //读取csr寄存器
+    wire csrwr = doCSR && inst[9:5] == 5'b1;        //直接写入csr寄存器
+    wire xchg  = doCSR && inst[9:6] != 4'b0;        //掩码写入csr寄存器
+    wire csreg = isERTN ? 14'h0 : inst[23:10];
+
+    assign csrBus = isERTN ? {14'h0, 1'b0, 1'b1, 1'b0}  // ERTN: 写 CRMD
+                           : {csreg,xchg,csrwr,csrrd};
+
+    // ============================================================
+    // 异常检测: ADEF(上游) > SYS > BRK > INE
+    // ============================================================
+    wire ine = !(is3R_ALU || isALUimm || isShiftImm
+              || isLU12IW || isPCADDU12I || isLoad || isStore
+              || isBranch || isB || isBL || isJIRL || isCSR
+              || isSYSCALL || isBREAK);
+
+    //未实现：IPE  用户态运行特权指令
+
+    assign evalid = evalid_in || isSYSCALL || isBREAK || ine;
+    assign ecode  = evalid_in ? ecode_in    :
+                    isSYSCALL  ? 6'h0B     :
+                    isBREAK    ? 6'h0C     :
+                                 6'h0D;
 
     // ============================================================
     // 寄存器字段有效性
     // ============================================================
     // 若本条指令中，rd是目标，rj,rk是数据源，则对应valid信号为真
-    assign valid_rd = regWrite && (rd != 5'b0);                // BL已设rd=1, 无需排除
+    assign valid_rd = regWrite && (rd != 5'b0);
     assign valid_rj = !(isLU12IW || isPCADDU12I  // 1RI21: inst[9:5]属si20
-                     || isB || isBL);            // I26:  inst[9:5]属offs26
-    assign valid_rk = is3R_ALU || rdIsSrc;       // 3R型 或 rd作数据源(store/branch)
+                     || isB || isBL || doCSR)             // I26:  inst[9:5]属offs26
+                     || xchg;                    // 特权掩码
+    assign valid_rk = is3R_ALU         // 3R型
+                     || rdIsSrc        // rd作数据源
+                     || csrwr || xchg  // 取其中的数据写入csr寄存器
 
 endmodule

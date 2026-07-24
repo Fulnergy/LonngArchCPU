@@ -2,6 +2,8 @@ module inst_controll(
     input clk,
     input rst_n,
     input jump_taken,
+    input except_taken,                 // 异常跳转 (最高优先级)
+    input [31:0] pc_except,            // 异常入口地址
     input nopl, noph, //出于发射顺序考虑，若低pc不发射，高pc也不发射
     input [31:0] pc_jump,
     input [63:0] dual_inst_raw,//来自IF的生指令
@@ -25,6 +27,9 @@ wire misaligned = pc_last[2];
 always @(*) begin
     if(!rst_n)begin
         pc_next=32'b0;
+    end
+    else if(except_taken)begin
+        pc_next=pc_except;
     end
     else if(jump_taken)begin
         pc_next=pc_jump;
@@ -61,7 +66,7 @@ always @(posedge clk) begin
         take<=1'b0;
         left<=NOP;
     end
-    else if(jump_taken) begin
+    else if(jump_taken || except_taken) begin
         take<=1'b0;
         left<=NOP;
     end

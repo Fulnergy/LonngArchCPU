@@ -8,7 +8,9 @@ module EX_LS(
     input [31:0] reg2,           // rk 或立即数 (ALU操作数2)
     input [31:0] imm,            // 解码后立即数
     input [31:0] pc,             // 当前指令PC (供 pcaddu12i)
-    output reg [31:0] alu_result,    // ALU结果 / 访存地址
+    input [31:0] csr_read,       // CSR 读出的旧值
+    input [16:0] csrBus,         // CSR 控制总线
+    output reg [31:0] alu_result,    // ALU结果 / 访存地址 / CSR 读回值
     output mem_we,               // 存储器写使能
     output [1:0] mem_size,       // 00=byte, 01=halfword, 10=word
     output [31:0] mem_wdata      // 写入存储器的数据
@@ -97,7 +99,12 @@ module EX_LS(
     reg  [63:0] product;
 
     always @(*) begin
-        if (!en) begin
+        // ── CSR 操作: 读回值写入 GPR ──
+        if (|csrBus[2:0]) begin
+            alu_result = csr_read;
+        end
+        // ── 其余 ──
+        else if (!en) begin
             alu_result = 32'b0;
         end
         // ── Load/Store: 地址 = reg1 + imm ──
