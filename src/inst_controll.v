@@ -86,7 +86,7 @@ always @(posedge clk) begin
 end
 
 assign dual_inst = misaligned ? {NOP,dual_inst_raw[63:32]} :
-                   take       ? {dual_inst_raw[31:0],left}   : dual_inst_raw;
+                   take       ? {dual_inst_raw[31:0],left} : dual_inst_raw;
 //实际运行时，这一拍的双指令按规则取出并给到ID
 //随后ID解出的结果(nop)再返回本模块，通过上述always块决定下一拍如何解
 

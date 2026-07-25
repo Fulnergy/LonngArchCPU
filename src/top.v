@@ -6,10 +6,12 @@ module top #(
 )
 (
     input clk,
-    input rst_n
+    input rst_n,
+    input [7:0] hwi,        // 硬件中断 HWI[7:0]
+    input       ipi         // 核间中断
 );
 
-parameter NOP = 32'h03400000;
+localparam NOP = 32'h03400000;
 
 // ── PC & IF 信号 ──
 wire [31:0] pc_next;                    // inst_controll 输出的下一 PC
@@ -32,6 +34,7 @@ wire        plv0;                     // 来自 CSR, 当前特权等级
 wire [31:0] csr_rdata_br, csr_rdata_ls;  // CSR 读回数据
 wire [31:0] eentry_val;                    // 异常入口地址
 wire [31:0] era_val, prmd_val;             // 异常返回信息 (供 ERTN)
+wire        int_pending;                   // 中断待处理
 
 // ── Regs 写端口 (WB 级驱动) ──
 reg  [4:0]  regAddr_rd_br_wb, regAddr_rd_ls_wb;       // 写回地址 (rd)
@@ -84,13 +87,6 @@ reg [31:0] pc_low_br_wb, pc_low_ls_wb;                 // 指令 PC
 
 assign if_en = 1'b1;
 
-reg i_flush_id_delayed;
-
-always @(*) begin
-    if(~rst_n) i_flush_id_delayed<=1'b0;
-    else i_flush_id_delayed<=flush_id;
-end
-
 IF_Stage #(
     .IMEM_FILE (IMEM_FILE)
 ) uif (
@@ -108,6 +104,7 @@ ID_Stage uid(
     .dual_inst(dual_inst),
     .pc_low(pc_low_id),
     .plv0(plv0),                  // 来自 CSR 的特权等级
+    .int_pending(int_pending),    // 来自 CSR 的中断信号
     .opc0(opcode_br_id),
     .opc1(opcode_ls_id),
     .func0(func_br_id),
@@ -128,27 +125,6 @@ ID_Stage uid(
     .noph(noph)
 );
 
-Regs urg(
-    .clk(clk),
-    .en(1'b1),
-    // 写端口 (WB → Regs)
-    .regWrite0(regWrite_br_wb && !flush_br_wb),
-    .regWrite1(regWrite_ls_wb && !flush_ls_wb),
-    .write_addr0(regAddr_rd_br_wb),
-    .write_addr1(regAddr_rd_ls_wb),
-    .write_data0(regData_br_wb),
-    .write_data1(regData_ls_wb),
-    // 读端口 (ID → Regs, 地址直连)
-    .read_addr01(regAddr_br_id[9:5]),   
-    .read_addr02(regAddr_br_id[14:10]), 
-    .read_addr11(regAddr_ls_id[9:5]),   
-    .read_addr12(regAddr_ls_id[14:10]), 
-    // 读出数据
-    .read01(regData_rj_br_id),
-    .read02(regData_rk_br_id),
-    .read11(regData_rj_ls_id),
-    .read12(regData_rk_ls_id)
-);
 
 
 // ============================================================
@@ -171,7 +147,6 @@ reg [5:0]   ecode_br_ex, ecode_ls_ex;                   // 异常编码
 wire        branch_taken_br_ex;           // EX_ALU 分支判定结果
 wire        flush_id, flush_ex, flush_ls_mem;  // 流水线冲刷
 wire        flush_br_mem, flush_br_wb, flush_ls_wb;  // 异常冲刷
-
 
 // ── EX 级信号 ──
 wire [31:0] aluResult_br_ex;              // 槽0 ALU 结果 (csr 读回值也走此线写入 GPR)
@@ -352,30 +327,6 @@ end
 wire except_br = evalid_br_wb && (evalid_ls_wb ?  high_ls_wb : 1'b1);  // LS高→BR老→取BR
 wire except_ls = evalid_ls_wb && (evalid_br_wb ? !high_ls_wb : 1'b1);  // BR高→LS老→取LS
 
-csr ucsr(
-    .clk(clk), 
-    .rst_n(rst_n),
-    .wea(|csrBus_br_wb[2:1] && !flush_br_wb),
-    .except     (except_br || except_ls),
-    .except_ecode(except_br ? ecode_br_wb : ecode_ls_wb),
-    .except_era (except_br ? pc_low_br_wb : pc_low_ls_wb),
-    .except_badv(
-        (except_br && ecode_br_wb == 6'h08) ? pc_low_br_wb  :
-        (except_ls && ecode_ls_wb == 6'h08) ? pc_low_ls_wb  :
-        (except_ls && ecode_ls_wb == 6'h09) ? aluResult_ls_wb : 32'b0
-    ),
-    .ertn       (csrBus_br_wb[1] && (csrBus_br_wb[16:3] == 14'h0)),  // ERTN 写 CRMD
-    .raddr0(csrBus_br_ex[16:3]),
-    .raddr1(csrBus_ls_ex[16:3]),
-    .waddr(csrBus_br_wb[16:3]),
-    .wdata(csrResult_br_wb),       // CSR 写入数据 (EX 级 csrResult 流水至 WB)
-    .plv0(plv0),
-    .rdata0(csr_rdata_br),         // → EX 级 csr_read
-    .rdata1(csr_rdata_ls),         // → EX 级 csr_read
-    .eentry_val(eentry_val),
-    .era_val   (era_val),
-    .prmd_val  (prmd_val)
-);
 
 
 // 对应槽0: ALU / Branch (使用流水线后 EX 级信号)
@@ -429,7 +380,7 @@ inst_controll uic(
     .nopl           (nopl),
     .noph           (noph),
     .pc_jump        (jumpAddr_br_ex),
-    .dual_inst_raw  (i_flush_id_delayed ? {NOP,NOP} : dual_inst_raw),
+    .dual_inst_raw  (flush_id ? {NOP,NOP} : dual_inst_raw),
     .pc_next        (pc_next),
     .pc_low         (pc_low_id),
     .dual_inst      (dual_inst)
@@ -464,10 +415,6 @@ always @(posedge clk) begin
         ecode_ls_mem      <= 6'b0;
         pc_low_br_mem     <= 32'b0;
         pc_low_ls_mem     <= 32'b0;
-        regWrite_br_wb    <= 1'b0;
-        regWrite_ls_wb    <= 1'b0;
-        high_br_wb        <= 1'b0;
-        high_ls_wb        <= 1'b0;
     end else begin
     // ── 槽0: EX → relay → WB ──
     if (flush_br_mem) begin
@@ -489,15 +436,6 @@ always @(posedge clk) begin
     ecode_br_mem      <= ecode_br_ex;
     pc_low_br_mem     <= sigBus_br_ex[0] ? (pc_low_ex + 4) : pc_low_ex;
     end
-    regAddr_rd_br_wb  <= regAddr_rd_br_mem;
-    csrBus_br_wb      <= csrBus_br_mem;
-    csrResult_br_wb   <= csrResult_br_mem;
-    evalid_br_wb      <= evalid_br_mem;
-    ecode_br_wb       <= ecode_br_mem;
-    pc_low_br_wb      <= pc_low_br_mem;
-    regData_br_wb  <= aluResult_br_mem;
-    regWrite_br_wb     <= sigBus_br_mem[1];
-    high_br_wb        <= sigBus_br_mem[0];
 
     // ── 槽1: EX → MEM ──
     if (flush_ls_mem) begin
@@ -548,20 +486,42 @@ reg [1:0]  memAddr_low_wb;                // data_addr[1:0] (延迟1拍, 读对�
 
 always @(posedge clk) begin
     if (!rst_n) begin
+        regWrite_br_wb    <= 1'b0;
         regWrite_ls_wb    <= 1'b0;
+        high_br_wb        <= 1'b0;
         high_ls_wb        <= 1'b0;
-        memRead_ls_wb     <= 1'b0;
+        regAddr_rd_br_wb  <= 5'b0;
         regAddr_rd_ls_wb  <= 5'b0;
+        regData_br_wb     <= 32'b0;
         aluResult_ls_wb   <= 32'b0;
+        memRead_ls_wb     <= 1'b0;
+        loadSignExt_ls_wb <= 1'b0;
         memSize_ls_wb     <= 2'b0;
         signExt_ls_wb     <= 1'b0;
         memAddr_low_wb    <= 2'b0;
+        csrBus_br_wb      <= 17'b0;
+        csrResult_br_wb   <= 32'b0;
         csrBus_ls_wb      <= 17'b0;
+        evalid_br_wb      <= 1'b0;
         evalid_ls_wb      <= 1'b0;
+        ecode_br_wb       <= 6'b0;
         ecode_ls_wb       <= 6'b0;
+        pc_low_br_wb      <= 32'b0;
         pc_low_ls_wb      <= 32'b0;
     end else begin
-    regAddr_rd_ls_wb    <= regAddr_rd_ls_mem;          // 直接写 WB 端口
+    // ── 槽0: MEM → WB ──
+    regAddr_rd_br_wb  <= regAddr_rd_br_mem;
+    regData_br_wb     <= aluResult_br_mem;
+    regWrite_br_wb    <= sigBus_br_mem[1];
+    high_br_wb        <= sigBus_br_mem[0];
+    csrBus_br_wb      <= csrBus_br_mem;
+    csrResult_br_wb   <= csrResult_br_mem;
+    evalid_br_wb      <= evalid_br_mem;
+    ecode_br_wb       <= ecode_br_mem;
+    pc_low_br_wb      <= pc_low_br_mem;
+
+    // ── 槽1: MEM → WB ──
+    regAddr_rd_ls_wb    <= regAddr_rd_ls_mem;
     regWrite_ls_wb       <= sigBus_ls_mem[1];
     high_ls_wb          <= sigBus_ls_mem[0];
     aluResult_ls_wb    <= aluResult_ls_mem;
@@ -618,6 +578,55 @@ MEM_Stage #(
 // ============================================================
 assign regData_ls_wb = memRead_ls_wb ? memRdata_ls_wb : aluResult_ls_wb;
 
+Regs urg(
+    .clk(clk),
+    .en(1'b1),
+    // 写端口 (WB → Regs)
+    .regWrite0(regWrite_br_wb && !flush_br_wb),
+    .regWrite1(regWrite_ls_wb && !flush_ls_wb),
+    .write_addr0(regAddr_rd_br_wb),
+    .write_addr1(regAddr_rd_ls_wb),
+    .write_data0(regData_br_wb),
+    .write_data1(regData_ls_wb),
+    // 读端口 (ID → Regs, 地址直连)
+    .read_addr01(regAddr_br_id[9:5]),   
+    .read_addr02(regAddr_br_id[14:10]), 
+    .read_addr11(regAddr_ls_id[9:5]),   
+    .read_addr12(regAddr_ls_id[14:10]), 
+    // 读出数据
+    .read01(regData_rj_br_id),
+    .read02(regData_rk_br_id),
+    .read11(regData_rj_ls_id),
+    .read12(regData_rk_ls_id)
+);
+
+
+csr ucsr(
+    .clk(clk), 
+    .rst_n(rst_n),
+    .wea(|csrBus_br_wb[2:1] && !flush_br_wb),
+    .except     (except_br || except_ls),
+    .except_ecode(except_br ? ecode_br_wb : ecode_ls_wb),
+    .except_era (except_br ? pc_low_br_wb : pc_low_ls_wb),
+    .except_badv(
+        (except_br && ecode_br_wb == 6'h08) ? pc_low_br_wb  :
+        (except_ls && ecode_ls_wb == 6'h08) ? pc_low_ls_wb  :
+        (except_ls && ecode_ls_wb == 6'h09) ? aluResult_ls_wb : 32'b0
+    ),
+    .ertn       (csrBus_br_wb[1] && (csrBus_br_wb[16:3] == 14'h0)),  // ERTN 写 CRMD    .hwi        (hwi),
+    .ipi        (ipi),    .raddr0(csrBus_br_ex[16:3]),
+    .raddr1(csrBus_ls_ex[16:3]),
+    .waddr(csrBus_br_wb[16:3]),
+    .wdata(csrResult_br_wb),       // CSR 写入数据 (EX 级 csrResult 流水至 WB)
+    .plv0(plv0),
+    .rdata0(csr_rdata_br),         // → EX 级 csr_read
+    .rdata1(csr_rdata_ls),         // → EX 级 csr_read
+    .eentry_val(eentry_val),
+    .era_val   (era_val),
+    .prmd_val  (prmd_val),
+    .int_pending(int_pending)
+);
+
 // ============================================================
 // 流水线控制 (分支冲刷)
 // ============================================================
@@ -634,5 +643,7 @@ pipeline_controll upipe_ctrl (
     .flush_br_wb  (flush_br_wb),
     .flush_ls_wb  (flush_ls_wb)
 );
+
+
 
 endmodule

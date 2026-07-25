@@ -8,7 +8,8 @@ module ID_Stage(
     input clk,
     input [63:0] dual_inst,
     input [31:0] pc_low,          // 当前双指令中低 PC (供 ADEF 检测)
-    input plv0;
+    input plv0,
+    input int_pending,            // 中断待处理 (优先级高于一切异常)
     output [9:0] opc0, opc1,        // opcode
     output [6:0] func0, func1,      // func
     output [31:0] imm0, imm1,
@@ -157,29 +158,25 @@ module ID_Stage(
     assign nopl = dep09;
     assign noph = dep10 || dep19 || conflict_ls || conflict_br || conflict_csr;
 
-    reg [94:0] bus0,bus1;
-    wire [93:0] busl = {raw_opc0,raw_func0,raw_imm0,rk0,rj0,rd0,valu0,jump0,branch0,memRead0,memWrite0,regWrite0,csr0,evalid0_raw,ecode0_raw};
-    wire [93:0] bush = {raw_opc1,raw_func1,raw_imm1,rk1,rj1,rd1,valu1,jump1,branch1,memRead1,memWrite1,regWrite1,csr1,evalid1_raw,ecode1_raw};
+    reg [87:0] bus0,bus1;
+    wire [86:0] busl = {raw_opc0,raw_func0,raw_imm0,rk0,rj0,rd0,csr0,valu0,jump0,branch0,memRead0,memWrite0,regWrite0};
+    wire [86:0] bush = {raw_opc1,raw_func1,raw_imm1,rk1,rj1,rd1,csr1,valu1,jump1,branch1,memRead1,memWrite1,regWrite1};
 
 
     always @(*) begin
-        if(nopl)begin
-            bus0 = 95'b0;
-            bus1 = 95'b0;
+        if(nopl || int_pending || adef)begin
+            bus0 = 88'b0;
+            bus1 = 88'b0;
         end
         else if(noph)begin
             if(ls0)begin
-                bus0 = 95'b0;
+                bus0 = 88'b0;
                 bus1 = {busl,1'b0};
             end
             else begin
                 bus0 = {busl,1'b0};
-                bus1 = 95'b0;
+                bus1 = 88'b0;
             end
-        end
-        else if(adef)begin         // ADEF: 强制双 NOP + 异常
-            bus0 = {busl[93:7], 1'b1, 6'h08, 1'b0};
-            bus1 = {bush[93:7], 1'b1, 6'h08, 1'b1};
         end
         else begin
             //sigbus中的high信号，表示若双发射，当前槽是否pc更高
@@ -194,8 +191,54 @@ module ID_Stage(
         end
     end
 
-    assign {opc0,func0,imm0,regs0,sigs0,csrBus0,evalid0,ecode0} = bus0;
-    assign {opc1,func1,imm1,regs1,sigs1,csrBus1,evalid1,ecode1} = bus1;
+    assign {opc0,func0,imm0,regs0,csrBus0,sigs0} = bus0;
+    assign {opc1,func1,imm1,regs1,csrBus1,sigs1} = bus1;
+
+    // ============================================================
+    // 异常信号赋值 (与 bus 独立, 复用 swap/stall 逻辑)
+    // ============================================================
+    reg        evalid0_out, evalid1_out;
+    reg [5:0]  ecode0_out, ecode1_out;
+
+    always @(*) begin
+        if(nopl)begin
+            evalid0_out = 1'b0; ecode0_out = 6'b0;
+            evalid1_out = 1'b0; ecode1_out = 6'b0;
+        end
+        else if(int_pending)begin
+            evalid0_out = 1'b1; ecode0_out = 6'h00;
+            evalid1_out = 1'b1; ecode1_out = 6'h00;
+        end
+        else if(adef)begin
+            evalid0_out = 1'b1; ecode0_out = 6'h08;
+            evalid1_out = 1'b1; ecode1_out = 6'h08;
+        end
+        else if(noph)begin
+            if(ls0)begin
+                evalid0_out = 1'b0; ecode0_out = 6'b0;
+                evalid1_out = evalid0_raw; ecode1_out = ecode0_raw;
+            end
+            else begin
+                evalid0_out = evalid0_raw; ecode0_out = ecode0_raw;
+                evalid1_out = 1'b0; ecode1_out = 6'b0;
+            end
+        end
+        else begin
+            if(swap_ls || swap_br || swap_csr)begin
+                evalid0_out = evalid1_raw; ecode0_out = ecode1_raw;
+                evalid1_out = evalid0_raw; ecode1_out = ecode0_raw;
+            end
+            else begin
+                evalid0_out = evalid0_raw; ecode0_out = ecode0_raw;
+                evalid1_out = evalid1_raw; ecode1_out = ecode1_raw;
+            end
+        end
+    end
+
+    assign evalid0 = evalid0_out;
+    assign evalid1 = evalid1_out;
+    assign ecode0  = ecode0_out;
+    assign ecode1  = ecode1_out;
     
 
 endmodule

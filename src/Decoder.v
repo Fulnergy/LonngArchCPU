@@ -157,7 +157,7 @@ module Decoder (
                    || isLoad                               // 加载写回
                    || isBL || isJIRL                       // 链接跳转写回
                    || isLU12IW || isPCADDU12I              // 立即数装载
-                   || doCSR                                // CSR写入      
+                   || doCSR;                                // CSR写入      
 
     wire csrrd = doCSR;                             //读取csr寄存器
     wire csrwr = doCSR && inst[9:5] == 5'b1;        //直接写入csr寄存器
@@ -193,6 +193,6 @@ module Decoder (
                      || xchg;                    // 特权掩码
     assign valid_rk = is3R_ALU         // 3R型
                      || rdIsSrc        // rd作数据源
-                     || csrwr || xchg  // 取其中的数据写入csr寄存器
+                     || csrwr || xchg;  // 取其中的数据写入csr寄存器
 
 endmodule
