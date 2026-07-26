@@ -10,6 +10,7 @@ module ID_Stage(
     input [31:0] pc_low,          // 当前双指令中低 PC (供 ADEF 检测)
     input plv0,
     input int_pending,            // 中断待处理 (优先级高于一切异常)
+    input stall,                  // 流水线暂停
     output [9:0] opc0, opc1,        // opcode
     output [6:0] func0, func1,      // func
     output [31:0] imm0, imm1,
@@ -126,7 +127,11 @@ module ID_Stage(
     reg [4:0] rd9;
 
     always @(posedge clk) begin
-        if(load0&&!nopl)begin
+        if(stall)begin
+            load9<=load9;
+            rd9<=rd9;
+        end
+        else if(load0&&!nopl)begin
             load9<=1'b1;
             rd9<=rd0;
         end

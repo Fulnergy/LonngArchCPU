@@ -4,13 +4,17 @@ module pipeline_controll(
     input  high_ls_wb,
     input  evalid_br_wb,
     input  evalid_ls_wb,
+    input  stall_dcache,              // dcache miss
     output flush_id,
     output flush_ex,
     output flush_br_mem,
     output flush_ls_mem,
     output flush_br_wb,
-    output flush_ls_wb
+    output flush_ls_wb,
+    output stall_out                  // 统一 stall
 );
+
+assign stall_out = stall_dcache;       // 未来 || 其他 stall 源
 
 wire evalid_wb = evalid_br_wb || evalid_ls_wb;
 
