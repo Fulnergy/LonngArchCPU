@@ -94,10 +94,11 @@ module dCache #(
     reg [1:0]             req_size;
 
     // ============================================================
-    // 地址选择: S_IDLE+cpu_req → cpu_addr, 其余 → req_addr
+    // 地址选择: S_IDLE/S_DATA+cpu_req → cpu_addr, 其余 → req_addr
+    //   S_DATA 中接受新请求实现背靠背 hit 流水化
     // ============================================================
     wire is_req_taken;
-    assign is_req_taken = (state == S_IDLE) && cpu_req;
+    assign is_req_taken = ((state == S_IDLE) || (state == S_DATA)) && cpu_req;
 
     wire [ADDR_WIDTH-1:0] active_addr;
     assign active_addr = is_req_taken ? cpu_addr : req_addr;
@@ -426,9 +427,23 @@ module dCache #(
                 end
             end
 
-            // ── S_DATA: data BRAM 输出到达 (必定是读命中) ──
+            // ── S_DATA: data BRAM 输出到达 ──
+            //   若新请求命中 → 直接流水化, 无需回 S_IDLE
             S_DATA: begin
-                next_state = S_IDLE;
+                if (cpu_req) begin
+                    if (hit0 || hit1) begin
+                        if (cpu_we)
+                            next_state = S_HIT_WR;   // 读→写命中: RMW
+                        else
+                            next_state = S_DATA;      // 读→读命中: 背靠背
+                    end else begin
+                        next_state = victim_dirty_comb
+                                     ? S_EVICT_RD
+                                     : S_FILL_REQ;    // 缺失: 逐出/填充
+                    end
+                end else begin
+                    next_state = S_IDLE;
+                end
             end
 
             // ── S_HIT_WR: data BRAM 输出到达, RMW 完成 ──
@@ -481,7 +496,9 @@ module dCache #(
 
     // ============================================================
     // CPU 读数据 (组合逻辑)
-    //   S_DATA: data BRAM 读命中, 组合输出
+    //   S_DATA: 上一拍 BRAM 读在本拍稳定, combo 输出
+    //   S_IDLE 拍 data_bram_dout 尚未更新 (BRAM 读还在进行)
+    //   hit1_latched 在 S_DATA 拍已锁存, 正确指向命中路
     // ============================================================
     wire read_data_valid;
     assign read_data_valid = (state == S_DATA);
@@ -494,16 +511,25 @@ module dCache #(
     end
 
     // ============================================================
-    // CPU Stall (组合逻辑, 0 拍)
-    //   stall=0 当:
-    //     a) S_IDLE 且 !cpu_req: 空闲
-    //     b) S_DATA: 读数据有效
-    //     c) S_HIT_WR: 写命中完成 (RMW 本拍提交)
-    //   S_HIT_WR 必须在此处解 stall, 否则写完成后回到 S_IDLE 时
-    //   cpu_req 仍为 1 会导致 stall 重新拉高, 测试台死锁
+    // CPU Stall (组合逻辑)
+    //   stall=0: S_IDLE && !cpu_req        空闲
+    //            S_IDLE && read_hit        0 stall
+    //            S_DATA && !miss           读数据有效 / 背靠背 hit
+    //            S_HIT_WR                  写命中提交
+    //   stall=1: S_IDLE && write_hit       RMW 独占
+    //            S_IDLE && miss            缺失
+    //            S_DATA && miss            背靠背 miss — 必须 stall
+    //            所有 EVICT/FILL/RETRY
     // ============================================================
+    wire hit_now;
+    assign hit_now = hit0 || hit1;
+
+    wire sdata_miss;
+    assign sdata_miss = (state == S_DATA) && cpu_req && !hit_now;
+
     assign cpu_stall = !((state == S_IDLE && !cpu_req) ||
-                          state == S_DATA ||
+                          (state == S_IDLE && cpu_req && hit_now && !cpu_we) ||
+                          (state == S_DATA && !sdata_miss) ||
                           state == S_HIT_WR);
 
     // ============================================================

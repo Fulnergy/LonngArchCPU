@@ -184,7 +184,6 @@ module tb_dcache;
         output [31:0] data;
         integer wait_cnt;
         begin
-            // 在 posedge 前设置请求信号
             cpu_req   = 1'b1;
             cpu_we    = 1'b0;
             cpu_addr  = addr;
@@ -192,25 +191,26 @@ module tb_dcache;
             cpu_wdata = 32'bx;
             cpu_wstrb = 4'b0000;
 
-            // 必须等至少 1 拍让 DUT 在边沿锁存请求
             @(posedge clk);
             wait_cnt = 1;
 
-            // 等待 stall=0 (请求完成)
             while (cpu_stall !== 1'b0) begin
                 @(posedge clk);
                 wait_cnt = wait_cnt + 1;
             end
 
-            // stall=0 的拍: 数据有效, 采样
-            data = cpu_rdata;
-
-            // 撤销请求 + 等一拍回到 S_IDLE
+            // 先撤 cpu_req, 防止 DUT 在 S_DATA 误判为背靠背请求
             cpu_req   = 1'b0;
             cpu_we    = 1'b0;
             cpu_size  = 2'b10;
             cpu_addr  = 32'hDEAD_BEEF;
             cpu_wstrb = 4'b0000;
+
+            // 在 negedge 采样, 确保组合逻辑已稳定
+            @(negedge clk);
+            data = cpu_rdata;
+
+            // 等一拍回到 S_IDLE
             @(posedge clk);
 
             $display("[TB] READ  addr=0x%08h → data=0x%08h  (stalled %0d cycles)",
@@ -241,13 +241,15 @@ module tb_dcache;
                 wait_cnt = wait_cnt + 1;
             end
 
-            // stall=0 拍: 写完成
+            // 先撤 cpu_req, 防止 DUT 误判为背靠背请求
             cpu_req   = 1'b0;
             cpu_we    = 1'b0;
             cpu_size  = 2'b10;
             cpu_addr  = 32'hDEAD_BEEF;
             cpu_wdata = 32'bx;
             cpu_wstrb = 4'b0000;
+
+            @(negedge clk);
             @(posedge clk);
 
             $display("[TB] WRITE addr=0x%08h wdata=0x%08h wstrb=%b  (stalled %0d cycles)",
@@ -259,6 +261,7 @@ module tb_dcache;
     // 仿真主流程
     // ============================================================
     reg  [31:0] rdata;
+    reg  [31:0] b2b_addr;
     integer     cycle;
 
     initial begin
@@ -526,38 +529,127 @@ module tb_dcache;
             $display("  ** PASS: dirty WB non-written words intact");
 
         $display("============================================================");
-        $display("[TB] PHASE 6 — 背靠背请求 (back-to-back hits)");
+        $display("[TB] PHASE 6 — 背靠背 read→read (S_DATA→S_DATA, 0 bubble)");
         $display("============================================================");
 
-        // 快速连续发两个读请求, 验证无气泡
-        // 当前: way0=tag4, way1=tag1
-        // T23 hit way0 → lru=1 (way1 LRU)
-        // 现在再读 tag=4 和 tag=1
+        // 当前: way0=tag5, way1=tag1. 两个都 hit.
+        // 交替读 tag5/word0 和 tag1/word0, 手动模拟流水线背靠背
+
+        // B2B 时序: posedge 发起/锁存 → negedge 采样 combo 结果
+        //   S_DATA 拍 stall=0, 下一拍自动推进到 S_DATA (背靠背)
+
+        // ── req0: tag=5 word=0 ──
+        cpu_req   = 1'b1;
+        cpu_we    = 1'b0;
+        cpu_addr  = make_addr(19'd5, 4'd0, 2'd0);
+        cpu_size  = 2'b10;
+        cpu_wstrb = 4'b0000;
+        @(posedge clk);                                    // S_IDLE→S_DATA (req0), BRAM 数据锁存
+        b2b_addr  = cpu_addr;
+        cpu_addr  = make_addr(19'd1, 4'd0, 2'd0);         // 切 addr (模拟 EX/MEM 更新)
+        @(negedge clk);                                    // combo 稳定, 采样 req0 数据
+        rdata = cpu_rdata;
+        if (rdata !== 32'hCAFE_BABE)
+            $display("  ** FAIL: B2B-0 expected 0xCAFE_BABE, got 0x%08h", rdata);
+        else
+            $display("  ** PASS: B2B-0 tag=5/word0 → 0x%08h", rdata);
+
+        // ── req1: tag=1 word=0 (已在上一 S_DATA 被接受) ──
+        @(posedge clk);                                    // S_DATA→S_DATA (req1), BRAM 锁存
+        b2b_addr  = cpu_addr;
+        cpu_addr  = make_addr(19'd5, 4'd5, 2'd0);
+        @(negedge clk);
+        rdata = cpu_rdata;
+        if (rdata !== 32'h11112222)
+            $display("  ** FAIL: B2B-1 expected 0x11112222, got 0x%08h", rdata);
+        else
+            $display("  ** PASS: B2B-1 tag=1/word0 → 0x%08h", rdata);
+
+        // ── req2: tag=5 word=5 ──
+        @(posedge clk);
+        b2b_addr  = cpu_addr;
+        cpu_addr  = make_addr(19'd1, 4'd10, 2'd0);
+        @(negedge clk);
+        rdata = cpu_rdata;
+        if (rdata !== 32'h05050505)
+            $display("  ** FAIL: B2B-2 expected 0x05050505, got 0x%08h", rdata);
+        else
+            $display("  ** PASS: B2B-2 tag=5/word5 → 0x%08h", rdata);
+
+        // 收尾
+        @(posedge clk);                                    // 最后一级 S_DATA→S_IDLE
+        cpu_req   = 1'b0;
+        @(posedge clk);
+
+        $display("============================================================");
+        $display("[TB] PHASE 7 — 背靠背 read→write hit (S_DATA→S_HIT_WR)  ");
+        $display("============================================================");
+
+        // 当前: way0=tag5, way1=tag1. tag5 dirty=0.
+        // 手动时序: posedge 发请求 → posedge 后切信号 → 等 S_HIT_WR
 
         cpu_req   = 1'b1;
         cpu_we    = 1'b0;
-        cpu_addr  = make_addr(19'd4, 4'd0, 2'd0);
+        cpu_addr  = make_addr(19'd5, 4'd0, 2'd0);
         cpu_size  = 2'b10;
         cpu_wstrb = 4'b0000;
+        @(posedge clk);                                    // S_IDLE→S_DATA (read)
+        // S_DATA 拍: 切信号为写, S_DATA 接受新请求 → next=S_HIT_WR
+        cpu_we    = 1'b1;
+        cpu_wdata = 32'hBEEF_DEAD;
+        cpu_wstrb = 4'b1111;
+        cpu_addr  = make_addr(19'd5, 4'd0, 2'd0);         // 同地址写
+        @(posedge clk);                                    // S_DATA→S_HIT_WR
+        // S_HIT_WR: RMW 完成, stall=0
+        cpu_req   = 1'b0;
+        cpu_we    = 1'b0;
+        @(posedge clk);                                    // S_HIT_WR→S_IDLE
 
-        @(posedge clk);
-        while (cpu_stall !== 1'b0) @(posedge clk);
-        rdata = cpu_rdata;
-        $display("[TB] B2B-1: tag=4 → 0x%08h", rdata);
-
-        // 同拍切换到下一个请求
-        cpu_addr  = make_addr(19'd1, 4'd0, 2'd0);
-
-        @(posedge clk);
-        while (cpu_stall !== 1'b0) @(posedge clk);
-        rdata = cpu_rdata;
-        $display("[TB] B2B-2: tag=1 → 0x%08h", rdata);
-
-        cpu_req  = 1'b0;
-        if (rdata !== 32'h1111_2222)
-            $display("  ** FAIL: B2B tag=1 expected 0x1111_2222, got 0x%08h", rdata);
+        // 验证: 读回 tag=5/word0
+        do_read(make_addr(19'd5, 4'd0, 2'd0), 2'b10, rdata);
+        if (rdata !== 32'hBEEF_DEAD)
+            $display("  ** FAIL: read→write hit: expected 0xBEEF_DEAD, got 0x%08h", rdata);
         else
-            $display("  ** PASS: back-to-back reads");
+            $display("  ** PASS: read→write hit (S_DATA→S_HIT_WR), dirty verified");
+
+        $display("============================================================");
+        $display("[TB] PHASE 8 — 背靠背 read→write miss (S_DATA→EVICT/FILL)");
+        $display("============================================================");
+
+        // 当前: way0=tag5(dirty), way1=tag1(dirty). LRU: way1=tag1 is LRU.
+        // 发 read tag=5/word0, S_DATA 拍切 write tag=6/word0 (miss)
+        // → sdata_miss=1, stall=1 → EVICT way1(tag1) → FILL tag=6 → S_HIT_WR
+
+        cpu_req   = 1'b1;
+        cpu_we    = 1'b0;
+        cpu_addr  = make_addr(19'd5, 4'd0, 2'd0);
+        cpu_size  = 2'b10;
+        cpu_wstrb = 4'b0000;
+        @(posedge clk);                                    // S_IDLE→S_DATA (read tag=5)
+        // S_DATA 拍: 切为 write miss
+        cpu_we    = 1'b1;
+        cpu_wdata = 32'hFEED_FACE;
+        cpu_wstrb = 4'b1111;
+        cpu_addr  = make_addr(19'd6, 4'd0, 2'd0);         // tag=6, miss! sdata_miss=1
+        while (cpu_stall !== 1'b0) @(posedge clk);         // 等 EVICT→FILL→RETRY→S_HIT_WR
+        // S_HIT_WR: stall=0, write-allocate 完成
+        cpu_req   = 1'b0;
+        cpu_we    = 1'b0;
+        @(posedge clk);                                    // S_HIT_WR→S_IDLE
+
+        // 验证: 读 tag=6/word0, 应得到 0xFEED_FACE
+        do_read(make_addr(19'd6, 4'd0, 2'd0), 2'b10, rdata);
+        if (rdata !== 32'hFEED_FACE)
+            $display("  ** FAIL: read→write miss: expected 0xFEED_FACE, got 0x%08h", rdata);
+        else
+            $display("  ** PASS: read→write miss (S_DATA→EVICT→FILL→S_HIT_WR)");
+
+        // 验证: tag=5 未受损
+        do_read(make_addr(19'd5, 4'd0, 2'd0), 2'b10, rdata);
+        if (rdata !== 32'hBEEF_DEAD)
+            $display("  ** FAIL: tag=5 corrupted after read→write miss, got 0x%08h", rdata);
+        else
+            $display("  ** PASS: tag=5 intact after read→write miss");
 
         $display("============================================================");
         $display("[TB] All tests complete.");
