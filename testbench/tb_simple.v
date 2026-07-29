@@ -6,7 +6,7 @@ module tb_simple;
     // 参数
     // ============================================================
     parameter CLK_PERIOD = 10;          // 100MHz
-    parameter SIM_CYCLES = 40;         // 仿真周期数
+    parameter SIM_CYCLES = 20;         // 仿真周期数
 
     // ============================================================
     // 信号
@@ -18,7 +18,7 @@ module tb_simple;
     // DUT
     // ============================================================
     top #(
-        .IMEM_FILE ("bench_bubble.mem"),
+        .IMEM_FILE ("bench_csr.mem"),
         .DMEM_FILE ("data.mem")
     ) u_top (
         .clk   (clk),
@@ -47,7 +47,7 @@ module tb_simple;
     // ============================================================
     initial begin
         #(CLK_PERIOD * SIM_CYCLES);
-        $writememh("result.mem", u_top.umem.u_dmem.mem);
+        //$writememh("result.mem", u_top.umem.u_dmem.mem);
         $display("=== Simulation finished after %0d cycles ===", SIM_CYCLES);
         $finish;
     end

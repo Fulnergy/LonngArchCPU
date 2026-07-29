@@ -330,7 +330,9 @@ always @(*) begin
 
     // ── 槽1 ──
     i_finalExData_csr_ls = csr_rdata_ls;
-    if (|csrBus_br_mem[2:1] && csrBus_br_mem[16:3] == csrBus_ls_ex[16:3])
+    if (|csrBus_br_ex[2:1] && csrBus_br_ex[16:3] == csrBus_ls_ex[16:3])
+        i_finalExData_csr_ls = csrResult_br_ex;            // 同拍槽0 CSR 写 → 槽1 读
+    else if (|csrBus_br_mem[2:1] && csrBus_br_mem[16:3] == csrBus_ls_ex[16:3])
         i_finalExData_csr_ls = csrResult_br_mem;
     else if (|csrBus_br_wb[2:1] && csrBus_br_wb[16:3] == csrBus_ls_ex[16:3])
         i_finalExData_csr_ls = csrResult_br_wb;
