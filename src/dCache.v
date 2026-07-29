@@ -2,24 +2,37 @@
 // dCache — 2路组相联数据缓存 (Write-Back + Write-Allocate)
 // ============================================================================
 // 特性:
-//   - 2路组相联, 共 NUM_SETS*2 行 (默认 128 组 → 256 行)
-//   - Cache line: LINE_SIZE_BYTES (默认 64B)
+//   - 2路组相联, NUM_SETS*2 行 (默认 128组×2路 = 256行)
+//   - Cache line: LINE_SIZE_BYTES (默认 64B = 16 words)
 //   - 写策略: write-back + write-allocate
-//   - 替换策略: invalid 优先 + LRU
-//   - Tag: distributed RAM (异步读, 0 拍组合判定 hit/miss)
-//   - Data: block RAM (同步读, 1 拍)
-//   - CPU 侧: cpu_stall (组合逻辑, 请求拍即刻确定是否需要 stall)
+//   - 替换策略: invalid 优先 + LRU (2路1bit伪LRU)
+//   - Tag: distributed RAM (异步读, 0拍组合判定 hit/miss)
+//   - Data: block RAM (同步读, 1拍)
 //   - 外部存储侧: ext_ready 握手
 //
-// 时序:
-//   cpu_req=1 的同拍:
-//     tag async read → hit/miss 组合确定
-//     data BRAM 同步读发起
-//     stall 组合输出:
-//       read  hit → stall=1 (等 data BRAM), next=S_DATA
-//       write hit → stall=1 (等 data BRAM+RMW), next=S_HIT_WR
-//       miss     → stall=1, next=EVICT or FILL
-//   S_DATA / S_HIT_WR (下一拍): data BRAM 输出到达, 完成
+// ── Stall 协议 ──
+//   cpu_stall 为组合逻辑输出, CPU 内部经 1 拍寄存器 (stall_reg) 后控制流水线:
+//     stall=1 的周期 → 下一 posedge 流水线冻结 (寄存器自保持)
+//     stall=0 的周期 → 下一 posedge 流水线正常推进
+//
+//   关键时序约束:
+//     - S_IDLE + read  hit: 本拍 stall=0, 下一拍 data BRAM 输出到达 S_DATA,
+//                           stall_reg 滞后 1 拍正好对齐 → 0 stall
+//     - S_IDLE + write hit: 本拍 stall=1, BRAM 读等待, 下一拍 S_HIT_WR 做 RMW
+//     - S_IDLE + miss:      本拍 stall=1, 进入 EVICT/FILL
+//     - S_DATA:             data BRAM 输出有效, 本拍 stall=0 交付读数据
+//     - S_DATA + read hit:  背靠背读, stall=0, S_DATA→S_DATA 无气泡
+//     - S_DATA + write hit: 背靠背写, stall=1, S_DATA→S_HIT_WR, 堵住后续指令
+//     - S_DATA + miss:      背靠背缺失, stall=1, S_DATA→EVICT/FILL
+//     - S_HIT_WR:           RMW 提交, stall=0 释放流水线 (写指令离开 MEM)
+//     - EVICT/FILL/RETRY:   始终 stall=1
+//
+//   延迟总结:
+//     读命中:  0 stall (S_IDLE stall=0 → S_DATA 交付)
+//     写命中:  1 stall (S_IDLE stall=1 + S_HIT_WR stall=1, RMW 幂等)
+//     读缺失:  fill 全程 stall=1 (逐出脏行 + 填充, ~35~70 拍)
+//     写缺失:  同读缺失 + S_HIT_WR
+//     背靠背读: 0 bubble (S_DATA→S_DATA, 每拍 1 个读)
 // ============================================================================
 
 module dCache #(
@@ -512,25 +525,36 @@ module dCache #(
 
     // ============================================================
     // CPU Stall (组合逻辑)
-    //   stall=0: S_IDLE && !cpu_req        空闲
-    //            S_IDLE && read_hit        0 stall
-    //            S_DATA && !miss           读数据有效 / 背靠背 hit
-    //            S_HIT_WR                  写命中提交
-    //   stall=1: S_IDLE && write_hit       RMW 独占
-    //            S_IDLE && miss            缺失
-    //            S_DATA && miss            背靠背 miss — 必须 stall
-    //            所有 EVICT/FILL/RETRY
+    //
+    // 协议: stall=1 的周期 → 下一 posedge stall_reg 锁存 1 → 流水线冻结
+    //       stall=0 的周期 → 下一 posedge stall_reg 锁存 0 → 流水线推进
+    //
+    // stall=0 条件 (任一成立):
+    //   S_IDLE && !cpu_req                空闲, 无请求
+    //   S_IDLE && cpu_req && read_hit     读命中 0-stall (stall_reg 滞后对齐)
+    //   S_DATA && !sdata_stall            data 交付 / 背靠背 read hit
+    //   S_HIT_WR                          RMW 已完成 → 释放流水线
+    //
+    // stall=1 条件 (其他所有):
+    //   S_IDLE && write_hit               BRAM 读等待 → S_HIT_WR
+    //   S_IDLE && miss                    EVICT/FILL
+    //   S_DATA && sdata_stall             write hit / miss 堵后续指令
+    //   S_EVICT_RD/WR/DONE/FILL_REQ/WR/RETRY
+    //
+    // sdata_stall: S_DATA 拍有新请求且不是 read hit → 必须 stall
+    //   - write hit: 下一拍 S_HIT_WR 不能接受新请求
+    //   - miss:      下一拍 EVICT/FILL 不能接受新请求
     // ============================================================
     wire hit_now;
     assign hit_now = hit0 || hit1;
 
-    wire sdata_miss;
-    assign sdata_miss = (state == S_DATA) && cpu_req && !hit_now;
+    wire sdata_stall;
+    assign sdata_stall = (state == S_DATA) && cpu_req && !(hit_now && !cpu_we);
 
     assign cpu_stall = !((state == S_IDLE && !cpu_req) ||
                           (state == S_IDLE && cpu_req && hit_now && !cpu_we) ||
-                          (state == S_DATA && !sdata_miss) ||
-                          state == S_HIT_WR);
+                          (state == S_DATA && !sdata_stall) ||
+                          (state == S_HIT_WR));
 
     // ============================================================
     // 初始化
