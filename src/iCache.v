@@ -1,10 +1,11 @@
 // ============================================================================
-// iCache — 2路组相联指令缓存 (只读, Write-Through 无意义, 统一用 Miss-Fill)
+// iCache — 2路组相联指令缓存 (64b 双发射取指, 只读)
 // ============================================================================
 // 特性:
 //   - 2路组相联, NUM_SETS*2 行 (默认 128组×2路 = 256行)
-//   - Cache line: LINE_SIZE_BYTES (默认 64B = 16 words)
-//   - 只读: 无写端口, 无 dirty 位, 无 write-back
+//   - Cache line: LINE_SIZE_BYTES (默认 64B = 8 words × 64b)
+//   - Data: 64b BRAM, 直接输出 dual_inst 指令对
+//   - Fill: 2次 32b AXI 读 → 拼装 1个 64b BRAM 字 (half_buf)
 //   - 替换策略: invalid 优先 + LRU (2路1bit伪LRU)
 //   - Tag: distributed RAM (异步读, 0拍组合判定 hit/miss)
 //   - Data: block RAM (同步读, 1拍)
@@ -25,7 +26,7 @@
 
 module iCache #(
     parameter ADDR_WIDTH       = 32,
-    parameter DATA_WIDTH       = 32,
+    parameter DATA_WIDTH       = 64,         // 64b 双发射取指
     parameter LINE_SIZE_BYTES  = 64,
     parameter NUM_SETS         = 128,
     parameter NUM_WAYS         = 2
@@ -39,13 +40,13 @@ module iCache #(
     output reg  [DATA_WIDTH-1:0]    cpu_rdata,
     output wire                     cpu_stall,
 
-    // ── 外部存储侧 (只读, ext_we 恒为0) ──
+    // ── 外部存储侧 (只读, AXI 32b) ──
     output reg                      ext_req,
     output reg                      ext_we,
     output reg  [ADDR_WIDTH-1:0]    ext_addr,
-    output reg  [DATA_WIDTH-1:0]    ext_wdata,
+    output reg  [31:0]              ext_wdata,
     output reg  [3:0]               ext_wstrb,
-    input  wire [DATA_WIDTH-1:0]    ext_rdata,
+    input  wire [31:0]              ext_rdata,
     input  wire                     ext_ready
 );
 
@@ -60,7 +61,6 @@ module iCache #(
     localparam TAG_ENTRY_WIDTH   = 1 + TAG_WIDTH;          // 仅 valid + tag (无 dirty)
     localparam DATA_DEPTH        = NUM_SETS * WORDS_PER_LINE;
     localparam DATA_ADDR_WIDTH   = SET_INDEX_WIDTH + WORD_OFFSET_WIDTH;
-    localparam CNT_WIDTH         = WORD_OFFSET_WIDTH + 1;
 
     // ============================================================
     // 状态机
@@ -92,7 +92,7 @@ module iCache #(
     wire [TAG_WIDTH-1:0]         active_tag;
 
     assign active_set      = active_addr[LINE_OFFSET_WIDTH +: SET_INDEX_WIDTH];
-    assign active_word_off = active_addr[LINE_OFFSET_WIDTH-1:2];
+    assign active_word_off = active_addr[LINE_OFFSET_WIDTH-1:3];
     assign active_tag      = active_addr[ADDR_WIDTH-1 : LINE_OFFSET_WIDTH + SET_INDEX_WIDTH];
 
     wire [TAG_WIDTH-1:0]         req_tag;
@@ -218,20 +218,40 @@ module iCache #(
     end
 
     // ============================================================
-    // 字计数器
+    // 字计数器 (64b BRAM word, 0-7)
+    //   填充时每 2 次 ext 读拼 1 个 BRAM 字
     // ============================================================
-    reg [CNT_WIDTH-1:0] word_cnt;
+    reg [WORD_OFFSET_WIDTH-1:0] word_cnt;   // 3b, 0-7
+    reg                         half_lo;    // 0=等待低32b, 1=低32b已锁存等高位
+    reg [31:0]                  half_buf;   // 低32b暂存
+
     wire word_cnt_last;
     assign word_cnt_last = (word_cnt == WORDS_PER_LINE - 1);
 
     always @(posedge clk) begin
         if (!rst_n) begin
             word_cnt <= 0;
+            half_lo  <= 1'b0;
+            half_buf <= 32'b0;
         end else begin
             case (state)
-                S_FILL_WR: word_cnt <= word_cnt + 1;
-                S_FILL_REQ: ;
-                default:   word_cnt <= 0;
+                S_FILL_WR: begin
+                    if (!half_lo) begin
+                        // 锁存低半字
+                        half_buf <= ext_rdata[31:0];
+                        half_lo  <= 1'b1;
+                    end else begin
+                        // 拼装高半字, 下一个 BRAM word
+                        half_lo <= 1'b0;
+                        if (!word_cnt_last)
+                            word_cnt <= word_cnt + 1;
+                    end
+                end
+                S_FILL_REQ: ;               // 保持, 不重置 word_cnt/half_lo
+                default: begin
+                    word_cnt <= 0;
+                    half_lo  <= 1'b0;
+                end
             endcase
         end
     end
@@ -243,8 +263,8 @@ module iCache #(
     wire [ADDR_WIDTH-1:0] word_addr_offset;
 
     assign req_line_base    = {req_tag, req_set, {LINE_OFFSET_WIDTH{1'b0}}};
-    assign word_addr_offset = {word_cnt[WORD_OFFSET_WIDTH-1:0],
-                               {($clog2(DATA_WIDTH/8)){1'b0}}};
+    // ext_addr: 32b 对齐, offset = word*8 + half*4
+    assign word_addr_offset = {word_cnt, half_lo, 2'b00};
 
     // ============================================================
     // BRAM 地址 & 写控制 (组合逻辑)
@@ -263,16 +283,22 @@ module iCache #(
 
         case (state)
             S_FILL_WR: begin
-                data_addr    = {req_set, word_cnt[WORD_OFFSET_WIDTH-1:0]};
-                data_wr_en   = 1'b1;
-                data_wr_way  = victim_way;
-                data_wr_data = ext_rdata;
+                data_addr  = {req_set, word_cnt};
+                if (!half_lo) begin
+                    // 等待高半字, 不写 BRAM
+                    data_wr_en = 1'b0;
+                end else begin
+                    // 拼装 64b: {ext_rdata, half_buf}
+                    data_wr_en   = 1'b1;
+                    data_wr_way  = victim_way;
+                    data_wr_data = {ext_rdata[31:0], half_buf};
 
-                if (word_cnt_last) begin
-                    tag_wr_en   = 1'b1;
-                    tag_wr_way  = victim_way;
-                    tag_wr_addr = req_set;
-                    tag_wr_data = {1'b1, req_tag};     // valid=1
+                    if (word_cnt_last) begin
+                        tag_wr_en   = 1'b1;
+                        tag_wr_way  = victim_way;
+                        tag_wr_addr = req_set;
+                        tag_wr_data = {1'b1, req_tag};
+                    end
                 end
             end
 
@@ -286,7 +312,7 @@ module iCache #(
     always @(posedge clk) begin
         if ((is_req_taken || state == S_RETRY) && hit_now) begin
             lru[active_set] <= hit0;
-        end else if (state == S_FILL_WR && word_cnt_last) begin
+        end else if (state == S_FILL_WR && half_lo && word_cnt_last) begin
             lru[req_set] <= ~victim_way;
         end
     end
@@ -314,7 +340,7 @@ module iCache #(
     end
 
     // ============================================================
-    // 状态转移
+    // 状态转移 (fill 需连续 2 次 ext 读)
     // ============================================================
     always @(posedge clk) begin
         if (!rst_n)
@@ -356,10 +382,12 @@ module iCache #(
             end
 
             S_FILL_WR: begin
-                if (word_cnt_last)
-                    next_state = S_RETRY;           // tag 已写入, 重读 BRAM
+                if (!half_lo)
+                    next_state = S_FILL_REQ;        // 还需读高半字
+                else if (word_cnt_last)
+                    next_state = S_RETRY;           // 最后 1 字完成
                 else
-                    next_state = S_FILL_REQ;
+                    next_state = S_FILL_REQ;        // 下一个 64b 字
             end
 
             // ── S_RETRY: tag 刚刚有效, 重读 BRAM ──

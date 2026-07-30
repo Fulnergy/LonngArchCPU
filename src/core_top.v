@@ -60,35 +60,13 @@ module core_top(
 );
 
     // ============================================================
-    // cache -> bridge 信号
+    // CPU core (含 iCache / dCache / axi_bridge)
     // ============================================================
-    wire        i_ext_req,   d_ext_req;
-    wire        d_ext_we;
-    wire [31:0] i_ext_addr,  d_ext_addr;
-    wire [31:0] d_ext_wdata;
-    wire [3:0]  d_ext_wstrb;
-    wire [31:0] i_ext_rdata, d_ext_rdata;
-    wire        i_ext_ready, d_ext_ready;
-
-    // ============================================================
-    // AXI 转接桥: dCache 优先于 iCache
-    // ============================================================
-    axi_bridge u_axi_bridge (
-        .clk         (aclk),
-        .rst_n       (aresetn),
-
-        .i_ext_req   (i_ext_req),
-        .i_ext_addr  (i_ext_addr),
-        .i_ext_rdata (i_ext_rdata),
-        .i_ext_ready (i_ext_ready),
-
-        .d_ext_req   (d_ext_req),
-        .d_ext_we    (d_ext_we),
-        .d_ext_addr  (d_ext_addr),
-        .d_ext_wdata (d_ext_wdata),
-        .d_ext_wstrb (d_ext_wstrb),
-        .d_ext_rdata (d_ext_rdata),
-        .d_ext_ready (d_ext_ready),
+    top u_top (
+        .clk     (aclk),
+        .rst_n   (aresetn),
+        .hwi     (intrpt),
+        .ipi     (1'b0),
 
         .arid    (arid),
         .araddr  (araddr),
@@ -127,10 +105,6 @@ module core_top(
         .bvalid  (bvalid),
         .bready  (bready)
     );
-
-    // ============================================================
-    // TODO: 例化 iCache / dCache / CPU core
-    // ============================================================
 
     assign ws_valid          = 1'b0;
     assign rf_rdata          = 32'b0;

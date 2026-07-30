@@ -5,19 +5,76 @@ module top #(
     parameter DMEM_FILE  = "dmem_init.hex"
 )
 (
-    input clk,
-    input rst_n,
-    input [7:0] hwi,        // 硬件中断 HWI[7:0]
-    input       ipi         // 核间中断
+    input           clk,
+    input           rst_n,
+    input  [ 7:0]   hwi,
+    input           ipi,
+
+    // ── AXI 总线 ──
+    // read request
+    output [ 3:0]   arid,
+    output [31:0]   araddr,
+    output [ 7:0]   arlen,
+    output [ 2:0]   arsize,
+    output [ 1:0]   arburst,
+    output [ 1:0]   arlock,
+    output [ 3:0]   arcache,
+    output [ 2:0]   arprot,
+    output          arvalid,
+    input           arready,
+    // read data
+    input  [ 3:0]   rid,
+    input  [31:0]   rdata,
+    input  [ 1:0]   rresp,
+    input           rlast,
+    input           rvalid,
+    output          rready,
+    // write request
+    output [ 3:0]   awid,
+    output [31:0]   awaddr,
+    output [ 7:0]   awlen,
+    output [ 2:0]   awsize,
+    output [ 1:0]   awburst,
+    output [ 1:0]   awlock,
+    output [ 3:0]   awcache,
+    output [ 2:0]   awprot,
+    output          awvalid,
+    input           awready,
+    // write data
+    output [ 3:0]   wid,
+    output [31:0]   wdata,
+    output [ 3:0]   wstrb,
+    output          wlast,
+    output          wvalid,
+    input           wready,
+    // write response
+    input  [ 3:0]   bid,
+    input  [ 1:0]   bresp,
+    input           bvalid,
+    output          bready
 );
 
 localparam NOP = 32'h03400000;
 
 // ── PC & IF 信号 ──
-wire [31:0] pc_next;                    // inst_controll 输出的下一 PC
-wire [63:0] dual_inst_raw;              // IF 取出的原始指令对
-wire [63:0] dual_inst;                  // inst_controll 调整后的指令对
-wire        if_en;                      // IF 级使能 (暂不 stall)
+wire [31:0] pc_next;
+wire [63:0] dual_inst_raw;
+wire [63:0] dual_inst;
+wire        if_en;
+wire        if_stall;                   // iCache stall → pipeline
+
+// ── MEM 访存 & stall ──
+wire        dcache_stall;               // dCache stall → pipeline
+wire [ 3:0] mem_write_strb;            // 字节写使能
+
+// ── cache → axi_bridge ──
+wire        i_ext_req,  d_ext_req;
+wire        d_ext_we;
+wire [31:0] i_ext_addr, d_ext_addr;
+wire [31:0] d_ext_wdata;
+wire [ 3:0] d_ext_wstrb;
+wire [31:0] i_ext_rdata, d_ext_rdata;
+wire        i_ext_ready, d_ext_ready;
 
 
 // ID Stage 输出
@@ -89,7 +146,7 @@ reg [31:0] pc_low_br_wb, pc_low_ls_wb;                 // 指令 PC
 
 wire        stall;                                     // 流水线暂停
 
-assign if_en = 1'b1;
+assign if_en = !stall;                                 // 全局 stall 时冻结 IF 取指
 
 // ── 地址翻译 ──
 wire [31:0] if_pa, mem_pa;
@@ -102,13 +159,20 @@ mmu u_mmu (
     .mem_pa(mem_pa)
 );
 
-IF_Stage #(
-    .IMEM_FILE (IMEM_FILE)
-) uif (
+IF_Stage uif (
     .clk        (clk),
-    .en         (if_en),
-    .pc         (if_pa[12:0]),
-    .dual_inst  (dual_inst_raw)
+    .rst_n      (rst_n),
+    .if_en      (if_en),
+    .pc         (if_pa),
+    .dual_inst  (dual_inst_raw),
+    .if_stall   (if_stall),
+    .ext_req    (i_ext_req),
+    .ext_we     (),
+    .ext_addr   (i_ext_addr),
+    .ext_wdata  (),
+    .ext_wstrb  (),
+    .ext_rdata  (i_ext_rdata),
+    .ext_ready  (i_ext_ready)
 );
 
 wire [31:0] pc_low_id;
@@ -576,20 +640,91 @@ assign i_memWdata_final = fwd_mem_both ? (sigBus_ls_mem[0] ? memRdata_ls_wb : al
 
 
 
-MEM_Stage #(
-    .ADDR_WIDTH (15),
-    .DATA_WIDTH (32),
-    .INIT_FILE  (DMEM_FILE)
-) umem (
+MEM_Stage umem (
     .clk        (clk),
+    .rst_n      (rst_n),
+    .mem_req    (sigBus_ls_mem[2] || sigBus_ls_mem[3]),
     .wr_en      (memWrite_ls_mem),
     .mem_size   (memSize_ls_mem),
-    .data_addr  (mem_pa[16:0]),
+    .data_addr  (mem_pa),
     .write_data (i_memWdata_final),
+    .write_strb (mem_write_strb),
     .signExt_wb (signExt_ls_wb),
     .mem_size_wb(memSize_ls_wb),
     .addr_low_wb(memAddr_low_wb),
-    .read_data  (memRdata_ls_wb)
+    .read_data  (memRdata_ls_wb),
+    .cpu_stall  (dcache_stall),
+    .ext_req    (d_ext_req),
+    .ext_we     (d_ext_we),
+    .ext_addr   (d_ext_addr),
+    .ext_wdata  (d_ext_wdata),
+    .ext_wstrb  (d_ext_wstrb),
+    .ext_rdata  (d_ext_rdata),
+    .ext_ready  (d_ext_ready)
+);
+
+// ── MEM 级 byte write strobe ──
+assign mem_write_strb =
+    (memSize_ls_mem == 2'b00) ? (4'b0001 << memAddr_ls_mem[1:0]) :
+    (memSize_ls_mem == 2'b01) ? (4'b0011 << {memAddr_ls_mem[1], 1'b0}) :
+                                 4'b1111;
+
+// ============================================================
+// AXI 转接桥 (dCache 优先于 iCache)
+// ============================================================
+axi_bridge u_axi_bridge (
+    .clk         (clk),
+    .rst_n       (rst_n),
+
+    .i_ext_req   (i_ext_req),
+    .i_ext_addr  (i_ext_addr),
+    .i_ext_rdata (i_ext_rdata),
+    .i_ext_ready (i_ext_ready),
+
+    .d_ext_req   (d_ext_req),
+    .d_ext_we    (d_ext_we),
+    .d_ext_addr  (d_ext_addr),
+    .d_ext_wdata (d_ext_wdata),
+    .d_ext_wstrb (d_ext_wstrb),
+    .d_ext_rdata (d_ext_rdata),
+    .d_ext_ready (d_ext_ready),
+
+    .arid    (arid),
+    .araddr  (araddr),
+    .arlen   (arlen),
+    .arsize  (arsize),
+    .arburst (arburst),
+    .arlock  (arlock),
+    .arcache (arcache),
+    .arprot  (arprot),
+    .arvalid (arvalid),
+    .arready (arready),
+    .rid     (rid),
+    .rdata   (rdata),
+    .rresp   (rresp),
+    .rlast   (rlast),
+    .rvalid  (rvalid),
+    .rready  (rready),
+    .awid    (awid),
+    .awaddr  (awaddr),
+    .awlen   (awlen),
+    .awsize  (awsize),
+    .awburst (awburst),
+    .awlock  (awlock),
+    .awcache (awcache),
+    .awprot  (awprot),
+    .awvalid (awvalid),
+    .awready (awready),
+    .wid     (wid),
+    .wdata   (wdata),
+    .wstrb   (wstrb),
+    .wlast   (wlast),
+    .wvalid  (wvalid),
+    .wready  (wready),
+    .bid     (bid),
+    .bresp   (bresp),
+    .bvalid  (bvalid),
+    .bready  (bready)
 );
 
 // ============================================================
@@ -660,7 +795,8 @@ pipeline_controll upipe_ctrl (
     .high_ls_wb   (high_ls_wb),
     .evalid_br_wb (evalid_br_wb),
     .evalid_ls_wb (evalid_ls_wb),
-    .stall_dcache (1'b0),           // TODO: 队友 dcache 连接
+    .stall_dcache (dcache_stall),
+    .stall_icache (if_stall),
     .flush_id     (flush_id),
     .flush_ex     (flush_ex),
     .flush_br_mem (flush_br_mem),

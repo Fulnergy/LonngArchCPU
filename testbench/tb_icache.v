@@ -28,7 +28,7 @@ module tb_icache;
 
     reg         cpu_req;
     reg  [31:0] cpu_addr;
-    wire [31:0] cpu_rdata;
+    wire [63:0] cpu_rdata;
     wire        cpu_stall;
 
     wire        ext_req;
@@ -44,7 +44,7 @@ module tb_icache;
     // ============================================================
     iCache #(
         .ADDR_WIDTH      (32),
-        .DATA_WIDTH      (32),
+        .DATA_WIDTH      (64),
         .LINE_SIZE_BYTES (64),
         .NUM_SETS        (128),
         .NUM_WAYS        (2)
@@ -135,12 +135,16 @@ module tb_icache;
         end
     endfunction
 
-    function [31:0] expected_word;
+    // 期望值: 64b BRAM word = ext字{2W+1(hi), 2W(lo)} 拼装
+    //   make_addr word_off → ext_lo = {word_off[3:1], 1'b0}, ext_hi = ext_lo+1
+    function [63:0] expected_word;
         input [18:0] tag;
         input [3:0]  word_off;
         begin
-            expected_word = {{4'b0, tag[3:0]}, {4'b0, word_off},
-                             {4'b0, word_off}, {4'b0, tag[3:0]}};
+            expected_word = {
+                {tag[7:0], {4'b0, word_off[3:1], 1'b1}, {4'b0, word_off[3:1], 1'b1}, tag[7:0]},
+                {tag[7:0], {4'b0, word_off[3:1], 1'b0}, {4'b0, word_off[3:1], 1'b0}, tag[7:0]}
+            };
         end
     endfunction
 
@@ -149,7 +153,7 @@ module tb_icache;
     // ============================================================
     task do_read;
         input  [31:0] addr;
-        output [31:0] data;
+        output [63:0] data;
         integer wait_cnt;
         begin
             cpu_req  = 1'b1;
@@ -180,7 +184,7 @@ module tb_icache;
     // ============================================================
     // 仿真主流程
     // ============================================================
-    reg  [31:0] rdata;
+    reg  [63:0] rdata;
     reg  [31:0] b2b_addr;
     integer     cycle;
 
