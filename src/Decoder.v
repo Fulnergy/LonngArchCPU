@@ -162,7 +162,7 @@ module Decoder (
     wire csrrd = doCSR;                             //读取csr寄存器
     wire csrwr = doCSR && inst[9:5] == 5'b1;        //直接写入csr寄存器
     wire xchg  = doCSR && inst[9:6] != 4'b0;        //掩码写入csr寄存器
-    wire csreg = isERTN ? 14'h0 : inst[23:10];
+    wire [13:0] csreg = isERTN ? 14'h0 : inst[23:10];
 
     assign csrBus = isERTN ? {14'h0, 1'b0, 1'b1, 1'b0}  // ERTN: 写 CRMD
                            : {csreg,xchg,csrwr,csrrd};

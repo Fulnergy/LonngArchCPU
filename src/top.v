@@ -35,6 +35,9 @@ wire [31:0] csr_rdata_br, csr_rdata_ls;  // CSR 读回数据
 wire [31:0] eentry_val;                    // 异常入口地址
 wire [31:0] era_val, prmd_val;             // 异常返回信息 (供 ERTN)
 wire        int_pending;                   // 中断待处理
+wire        da, pg;                         // CRMD 翻译模式
+wire [1:0]  plv;                            // 当前特权等级
+wire [31:0] dmw0_val, dmw1_val;             // DMW 窗口
 
 // ── Regs 写端口 (WB 级驱动) ──
 reg  [4:0]  regAddr_rd_br_wb, regAddr_rd_ls_wb;       // 写回地址 (rd)
@@ -88,12 +91,23 @@ wire        stall;                                     // 流水线暂停
 
 assign if_en = 1'b1;
 
+// ── 地址翻译 ──
+wire [31:0] if_pa, mem_pa;
+mmu u_mmu (
+    .if_va (pc_next),
+    .mem_va(memAddr_ls_mem),
+    .plv   (plv), .da(da), .pg(pg),
+    .dmw0  (dmw0_val), .dmw1(dmw1_val),
+    .if_pa (if_pa),
+    .mem_pa(mem_pa)
+);
+
 IF_Stage #(
     .IMEM_FILE (IMEM_FILE)
 ) uif (
     .clk        (clk),
     .en         (if_en),
-    .pc         (pc_next[12:0]),
+    .pc         (if_pa[12:0]),
     .dual_inst  (dual_inst_raw)
 );
 
@@ -316,7 +330,9 @@ always @(*) begin
 
     // ── 槽1 ──
     i_finalExData_csr_ls = csr_rdata_ls;
-    if (|csrBus_br_mem[2:1] && csrBus_br_mem[16:3] == csrBus_ls_ex[16:3])
+    if (|csrBus_br_ex[2:1] && csrBus_br_ex[16:3] == csrBus_ls_ex[16:3])
+        i_finalExData_csr_ls = csrResult_br_ex;            // 同拍槽0 CSR 写 → 槽1 读
+    else if (|csrBus_br_mem[2:1] && csrBus_br_mem[16:3] == csrBus_ls_ex[16:3])
         i_finalExData_csr_ls = csrResult_br_mem;
     else if (|csrBus_br_wb[2:1] && csrBus_br_wb[16:3] == csrBus_ls_ex[16:3])
         i_finalExData_csr_ls = csrResult_br_wb;
@@ -568,7 +584,7 @@ MEM_Stage #(
     .clk        (clk),
     .wr_en      (memWrite_ls_mem),
     .mem_size   (memSize_ls_mem),
-    .data_addr  (memAddr_ls_mem[16:0]),
+    .data_addr  (mem_pa[16:0]),
     .write_data (i_memWdata_final),
     .signExt_wb (signExt_ls_wb),
     .mem_size_wb(memSize_ls_wb),
@@ -627,7 +643,12 @@ csr ucsr(
     .eentry_val(eentry_val),
     .era_val   (era_val),
     .prmd_val  (prmd_val),
-    .int_pending(int_pending)
+    .int_pending(int_pending),
+    .da         (da),
+    .pg         (pg),
+    .plv        (plv),
+    .dmw0_val   (dmw0_val),
+    .dmw1_val   (dmw1_val)
 );
 
 // ============================================================

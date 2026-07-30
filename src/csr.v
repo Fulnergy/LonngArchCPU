@@ -15,7 +15,10 @@ module csr (
     output [31:0]  eentry_val,                   // 异常入口地址
     output [31:0]  era_val,                      // ERA (供 ERTN)
     output [31:0]  prmd_val,                     // PRMD (供 ERTN)
-    output         int_pending                   // 中断待处理
+    output         int_pending,                  // 中断待处理
+    output         da, pg,                       // CRMD 翻译模式
+    output [1:0]   plv,                          // 当前特权等级
+    output [31:0]  dmw0_val, dmw1_val            // DMW 窗口
 );
 
 localparam
@@ -31,6 +34,8 @@ localparam
     CSR_TCFG   = 14'h41,
     CSR_TVAL   = 14'h42,
     CSR_TICLR  = 14'h44,
+    CSR_DMW0   = 14'h180,
+    CSR_DMW1   = 14'h181,
     CSR_SAVE0  = 14'h30,
     CSR_SAVE1  = 14'h31,
     CSR_SAVE2  = 14'h32,
@@ -42,6 +47,7 @@ localparam TIMER_WIDTH = 28;
 // 各寄存器定义
 reg [31:0] crmd, prmd, ecfg, estat, era, badv, eentry, llbctl;
 reg [31:0] tid, tcfg;
+reg [31:0] dmw0, dmw1;
 reg [31:0] save [0:3];
 
 // ============================================================
@@ -62,6 +68,8 @@ function [31:0] csr_read;
                    (a == CSR_TCFG)   ? tcfg   :
                    (a == CSR_TVAL)   ? { {32-TIMER_WIDTH{1'b0}}, tval_comb } :
                    (a == CSR_TICLR)  ? 32'b0  :  // TICLR 读恒为 0
+                   (a == CSR_DMW0)   ? dmw0   :
+                   (a == CSR_DMW1)   ? dmw1   :
                    (a == CSR_SAVE0)  ? save[0] :
                    (a == CSR_SAVE1)  ? save[1] :
                    (a == CSR_SAVE2)  ? save[2] :
@@ -77,6 +85,11 @@ assign rdata1 = csr_read(raddr1);
 // plv0: CRMD.PLV==0 时为 1
 // ============================================================
 assign plv0 = (crmd[1:0] == 2'b0);
+assign plv  = crmd[1:0];
+assign da   = crmd[3];
+assign pg   = crmd[4];
+assign dmw0_val = dmw0;
+assign dmw1_val = dmw1;
 assign eentry_val = eentry;
 assign era_val    = era;
 assign prmd_val   = prmd;
@@ -274,6 +287,26 @@ end
 // TICLR (0x44): 定时中断清除 — 读 0, 写 1 清 TI
 //   由定时器 always 块处理
 // ============================================================
+
+// ============================================================
+// DMW0 (0x180), DMW1 (0x181): 直接映射配置窗口
+//   [0] PLV0, [3] PLV3, [5:4] MAT, [27:25] PSEG, [31:29] VSEG
+// ============================================================
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        dmw0 <= 32'b0;
+    end else if (wea && waddr == CSR_DMW0) begin
+        dmw0 <= wdata & 32'hee000039;
+    end
+end
+
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        dmw1 <= 32'b0;
+    end else if (wea && waddr == CSR_DMW1) begin
+        dmw1 <= wdata & 32'hee000039;
+    end
+end
 
 // ============================================================
 // SAVE0~3 (0x30~0x33): 数据保存 — 全 32 位 RW
