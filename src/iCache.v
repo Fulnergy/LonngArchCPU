@@ -224,6 +224,7 @@ module iCache #(
     reg [WORD_OFFSET_WIDTH-1:0] word_cnt;   // 3b, 0-7
     reg                         half_lo;    // 0=等待低32b, 1=低32b已锁存等高位
     reg [31:0]                  half_buf;   // 低32b暂存
+    reg [31:0]                  ext_rdata_latched; // ext_ready=1 时锁存, 供 S_FILL_WR 使用
 
     wire word_cnt_last;
     assign word_cnt_last = (word_cnt == WORDS_PER_LINE - 1);
@@ -238,7 +239,7 @@ module iCache #(
                 S_FILL_WR: begin
                     if (!half_lo) begin
                         // 锁存低半字
-                        half_buf <= ext_rdata[31:0];
+                        half_buf <= ext_rdata_latched;
                         half_lo  <= 1'b1;
                     end else begin
                         // 拼装高半字, 下一个 BRAM word
@@ -254,6 +255,13 @@ module iCache #(
                 end
             endcase
         end
+    end
+
+    // ext_rdata 只在 ext_ready=1 时有效, 下一拍 bridge 已归 S_IDLE
+    // 在有效周期锁存, 供 S_FILL_WR 使用
+    always @(posedge clk) begin
+        if (ext_ready)
+            ext_rdata_latched <= ext_rdata;
     end
 
     // ============================================================
@@ -288,10 +296,10 @@ module iCache #(
                     // 等待高半字, 不写 BRAM
                     data_wr_en = 1'b0;
                 end else begin
-                    // 拼装 64b: {ext_rdata, half_buf}
+                    // 拼装 64b: {ext_rdata_latched, half_buf}
                     data_wr_en   = 1'b1;
                     data_wr_way  = victim_way;
-                    data_wr_data = {ext_rdata[31:0], half_buf};
+                    data_wr_data = {ext_rdata_latched, half_buf};
 
                     if (word_cnt_last) begin
                         tag_wr_en   = 1'b1;
