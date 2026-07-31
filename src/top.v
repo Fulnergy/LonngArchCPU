@@ -60,7 +60,6 @@ localparam NOP = 32'h03400000;
 wire [31:0] pc_next;
 wire [63:0] dual_inst_raw;
 wire [63:0] dual_inst;
-wire        if_en;
 wire        if_stall;                   // iCache stall → pipeline
 
 // ── MEM 访存 & stall ──
@@ -146,8 +145,6 @@ reg [31:0] pc_low_br_wb, pc_low_ls_wb;                 // 指令 PC
 
 wire        stall;                                     // 流水线暂停
 
-assign if_en = !stall;                                 // 全局 stall 时冻结 IF 取指
-
 // ── 地址翻译 ──
 wire [31:0] if_pa, mem_pa;
 mmu u_mmu (
@@ -162,7 +159,7 @@ mmu u_mmu (
 IF_Stage uif (
     .clk        (clk),
     .rst_n      (rst_n),
-    .if_en      (if_en),
+    .if_en      (rst_n),
     .pc         (if_pa),
     .dual_inst  (dual_inst_raw),
     .if_stall   (if_stall),

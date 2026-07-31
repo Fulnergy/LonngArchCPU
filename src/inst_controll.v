@@ -53,7 +53,7 @@ end
 
 always @(posedge clk) begin
     if(~rst_n)begin
-        pc_last<=32'b0;
+        pc_last<=32'h1c000000;
     end
     else begin
         pc_last<=pc_next;
