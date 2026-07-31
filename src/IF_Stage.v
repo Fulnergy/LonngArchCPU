@@ -11,7 +11,6 @@ module IF_Stage (
     input  wire         rst_n,
 
     // ── CPU 侧 ──
-    input  wire         if_en,           // 取指使能 (受全局 stall 调控)
     input  wire [31:0]  pc,              // 字节地址 (32b)
     output wire [63:0]  dual_inst,       // {inst_hi, inst_lo}
     output wire         if_stall,        // IF 级 stall
@@ -38,7 +37,7 @@ module IF_Stage (
     ) u_icache (
         .clk        (clk),
         .rst_n      (rst_n),
-        .cpu_req    (if_en),            // 受全局 stall 调控
+        .cpu_req    (1'b1),             // 始终请求, cache 内部处理 busy
         .cpu_addr   ({pc[31:3], 3'b0}), // 8B 对齐
         .cpu_rdata  (dual_inst),
         .cpu_stall  (if_stall),

@@ -12,7 +12,7 @@ module pipeline_controll(
     output flush_ls_mem,
     output flush_br_wb,
     output flush_ls_wb,
-    output stall_out                  // 统一 stall (dcache || icache)
+    output stall_out                  // 统一 stall
 );
 
 assign stall_out = stall_dcache || stall_icache;
