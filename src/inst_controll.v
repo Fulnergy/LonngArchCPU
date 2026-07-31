@@ -52,7 +52,7 @@ end
 
 always @(posedge clk) begin
     if(~rst_n)begin
-        pc_last<=32'b0;
+        pc_last<=32'h1c000000;
     end
     else if(!stall)begin          // stall=1 时冻结 pc_last, pc_next 自然不变
         pc_last<=pc_next;
