@@ -266,6 +266,7 @@ module dCache #(
     // 字计数器
     // ============================================================
     reg [CNT_WIDTH-1:0] word_cnt;
+    reg [DATA_WIDTH-1:0] ext_rdata_latched; // ext_ready=1 时锁存, 供 S_FILL_WR 使用
     wire word_cnt_last;
     assign word_cnt_last = (word_cnt == WORDS_PER_LINE - 1);
 
@@ -282,6 +283,13 @@ module dCache #(
                 default: word_cnt <= 0;
             endcase
         end
+    end
+
+    // ext_rdata 只在 ext_ready=1 时有效, 下一拍 bridge 已归 S_IDLE
+    // 在有效周期锁存, 供 S_FILL_WR 使用
+    always @(posedge clk) begin
+        if (ext_ready)
+            ext_rdata_latched <= ext_rdata;
     end
 
     // ============================================================
@@ -351,7 +359,7 @@ module dCache #(
                 data_addr    = {req_set, word_cnt[WORD_OFFSET_WIDTH-1:0]};
                 data_wr_en   = 1'b1;
                 data_wr_way  = victim_way;
-                data_wr_data = ext_rdata;
+                data_wr_data = ext_rdata_latched;
 
                 if (word_cnt_last) begin
                     tag_wr_en   = 1'b1;
