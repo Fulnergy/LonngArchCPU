@@ -12,7 +12,7 @@
 module tb_core;
 
     parameter CLK_PERIOD  = 10;
-    parameter SIM_CYCLES  = 1000;
+    parameter SIM_CYCLES  = 10000;
     parameter DRAM_DEPTH  = 16384;        // 64KB / 4B
     parameter DRAM_AW     = 14;           // addr[15:2]
 
