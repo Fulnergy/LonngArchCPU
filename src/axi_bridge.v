@@ -157,7 +157,7 @@ module axi_bridge (
             end
 
             S_W_DATA: begin
-                if (is_write && d_ext_req && d_ext_we)
+                if (is_write)
                     d_ext_ready = wready;
             end
 

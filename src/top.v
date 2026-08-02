@@ -242,10 +242,6 @@ wire ale = (sigBus_ls_ex[3] || sigBus_ls_ex[2]) && (
     (memSize_ls_ex == 2'b10 && |aluResult_ls_ex[1:0])
 );
 
-// 访存门控: 异常指令不产生副作用
-wire gate_ls = ale || evalid_ls_ex || (evalid_br_ex && sigBus_ls_ex[0]);
-
-
 always @(posedge clk) begin
     if (!rst_n || flush_ex) begin
         sigBus_br_ex <= 7'b0;
@@ -434,8 +430,8 @@ EX_ALU uea(
 EX_LS uels(
     .clk        (clk),
     .en         (1'b1),
-    .memRead    (sigBus_ls_ex[3] && !gate_ls),
-    .memWrite   (sigBus_ls_ex[2] && !gate_ls),
+    .memRead    (sigBus_ls_ex[3]),
+    .memWrite   (sigBus_ls_ex[2]),
     .opcode     (opcode_ls_ex),
     .func       (func_ls_ex),
     .reg1       (i_finalExData_rj_ls),            // rj (基址)
@@ -635,13 +631,13 @@ assign i_memWdata_final = fwd_mem_both ? (sigBus_ls_mem[0] ? memRdata_ls_wb : al
                                          memWdata_ls_mem;
 
 
-
+wire block_ls = evalid_ls_mem || evalid_br_mem && sigBus_ls_mem[0];
 
 MEM_Stage umem (
     .clk        (clk),
     .rst_n      (rst_n),
-    .mem_req    (sigBus_ls_mem[2] || sigBus_ls_mem[3]),
-    .wr_en      (memWrite_ls_mem),
+    .mem_req    ((sigBus_ls_mem[2] || sigBus_ls_mem[3]) && !block_ls),
+    .wr_en      (memWrite_ls_mem && !block_ls),
     .mem_size   (memSize_ls_mem),
     .data_addr  (mem_pa),
     .write_data (i_memWdata_final),

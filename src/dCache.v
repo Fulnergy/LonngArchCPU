@@ -396,11 +396,8 @@ module dCache #(
 
         case (state)
             S_EVICT_WR: begin
-                // 仅在第一周期断言, 避免 ext_ready=1 时重复
-                if (!ext_ready) begin
-                    ext_req   = 1'b1;
-                    ext_we    = 1'b1;
-                end
+                ext_req   = 1'b1;
+                ext_we    = 1'b1;
                 ext_addr  = victim_line_base + word_addr_offset;
                 ext_wdata = evict_data;
                 ext_wstrb = 4'b1111;
