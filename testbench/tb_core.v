@@ -95,8 +95,9 @@ module tb_core;
     always #(CLK_PERIOD / 2) aclk = ~aclk;
 
     // ============================================================
-    // 复位 & DRAM 初始化 (合并到一个 initial 块避免竞争)
+    // 复位 & DRAM 初始化
     // ============================================================
+    integer dram_init_i;
     initial begin
         aresetn = 1'b0;
         arready = 1'b0; awready = 1'b0; wready  = 1'b0;
@@ -104,6 +105,10 @@ module tb_core;
         bvalid  = 1'b0; bresp   = 2'b0;
         rid     = 4'b0; rdata   = 32'b0;
         bid     = 4'b0;
+
+        // 先全部清零, 避免未初始化区域为 X
+        for (dram_init_i = 0; dram_init_i < DRAM_DEPTH; dram_init_i = dram_init_i + 1)
+            dram[dram_init_i] = 32'b0;
 
         $readmemh("bench_core.mem", dram);
         $display("[TB] DRAM loaded, %0d words", DRAM_DEPTH);
@@ -113,17 +118,23 @@ module tb_core;
     end
 
     // ============================================================
-    // 读通道 (单进程 FSM，全部寄存器输出)
+    // 读通道 (支持 burst: arlen 控制返回节拍数)
     //
-    //   IDLE: arready=1, rvalid=0
-    //         arvalid & arready → 锁存 addr/id → RESP
-    //   RESP: arready=0, rvalid=1, rdata = dram[addr]
-    //         rvalid & rready → IDLE
+    //   IDLE: arready=1, AR握手 → 锁存 addr/id/len → RESP
+    //   RESP: 逐拍返回数据, rlast 在末拍置 1, 地址自动递增
     // ============================================================
     localparam R_IDLE = 1'b0, R_RESP = 1'b1;
     reg r_state;
     reg [31:0] r_addr_latch;
     reg [ 3:0] r_id_latch;
+    reg [ 7:0] r_len;             // burst 长度 (arlen 锁存值)
+    reg [ 7:0] r_cnt;             // 当前 beat 计数 (0 ~ arlen)
+
+    // 组合读: r_data_comb 跟随 r_addr_latch 即时变化
+    wire [DRAM_AW-1:0] r_dram_idx;
+    assign r_dram_idx = r_addr_latch[DRAM_AW+1:2];
+    wire [31:0] r_data_comb;
+    assign r_data_comb = dram[r_dram_idx];
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
@@ -136,13 +147,18 @@ module tb_core;
             rdata        <= 32'b0;
             r_addr_latch <= 32'b0;
             r_id_latch   <= 4'b0;
+            r_len        <= 8'd0;
+            r_cnt        <= 8'd0;
         end else begin
             case (r_state)
                 R_IDLE: begin
                     arready <= 1'b1;
+                    rvalid  <= 1'b0;
                     if (arvalid && arready) begin
                         r_addr_latch <= araddr;
                         r_id_latch   <= arid;
+                        r_len        <= arlen;
+                        r_cnt        <= 8'd0;
                         r_state      <= R_RESP;
                     end
                 end
@@ -150,13 +166,18 @@ module tb_core;
                 R_RESP: begin
                     arready <= 1'b0;
                     rvalid  <= 1'b1;
-                    rlast   <= 1'b1;
                     rresp   <= 2'b00;
                     rid     <= r_id_latch;
-                    rdata   <= dram[r_addr_latch[DRAM_AW+1:2]];
+                    rdata   <= r_data_comb;
+                    rlast   <= (r_cnt == r_len);
+
                     if (rvalid && rready) begin
-                        rvalid  <= 1'b0;
-                        r_state <= R_IDLE;
+                        r_addr_latch <= r_addr_latch + 32'd4;
+                        r_cnt        <= r_cnt + 8'd1;
+                        if (r_cnt == r_len) begin
+                            rvalid  <= 1'b0;
+                            r_state <= R_IDLE;
+                        end
                     end
                 end
 
@@ -166,75 +187,58 @@ module tb_core;
     end
 
     // ============================================================
-    // 写通道 (单进程 FSM，全部寄存器输出)
+    // 写通道 (支持 burst: awlen 控制接收节拍数)
     //
-    //   IDLE: awready=1, wready=1
-    //         分别锁存 AW 和 W (可同拍或不同拍)
-    //         AW+W 都就绪 → 写 DRAM → RESP
-    //   RESP: bvalid=1, awready=0, wready=0
-    //         bvalid & bready → IDLE
-    //
-    //   写数据选择: 若 W 已锁存则用 wd_latch, 否则用当拍 wdata
-    //   写地址选择: 若 AW 已锁存则用 aw_latch, 否则用当拍 awaddr
-    //   (非阻塞赋值规则: RHS 全部在时钟沿前求值, 因此用 flag 做 mux)
+    //   IDLE: awready=1, wready=1. AW 握手锁存 addr/len.
+    //         连续接收 W beats 写入 DRAM, 地址自增.
+    //         wlast=1 → 进入 RESP
+    //   RESP: bvalid=1, 等待 bready → IDLE
     // ============================================================
     localparam W_IDLE = 2'd0, W_RESP = 2'd1;
     reg [1:0] w_state;
 
-    reg        aw_got, w_got;
-    reg [31:0] aw_latch;
-    reg [ 3:0] awid_latch;
-    reg [31:0] wd_latch;
-
-    // 写使能计算 (IDLE 态时, AW 和 W 是否都已就绪)
-    wire w_both_ready = (aw_got || (awvalid && awready)) &&
-                        (w_got  || (wvalid && wready));
+    reg        aw_done;          // AW 已握手
+    reg [31:0] w_addr_latch;     // 当前写地址
+    reg [ 7:0] w_len_latch;      // burst 长度
+    reg [ 7:0] w_cnt;            // 当前 beat 计数
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            w_state    <= W_IDLE;
-            awready    <= 1'b0;
-            wready     <= 1'b0;
-            bvalid     <= 1'b0;
-            bresp      <= 2'b0;
-            bid        <= 4'b0;
-            aw_got     <= 1'b0;
-            w_got      <= 1'b0;
-            aw_latch   <= 32'b0;
-            awid_latch <= 4'b0;
-            wd_latch   <= 32'b0;
+            w_state      <= W_IDLE;
+            awready      <= 1'b0;
+            wready       <= 1'b0;
+            bvalid       <= 1'b0;
+            bresp        <= 2'b0;
+            bid          <= 4'b0;
+            aw_done      <= 1'b0;
+            w_addr_latch <= 32'b0;
+            w_len_latch  <= 8'd0;
+            w_cnt        <= 8'd0;
         end else begin
             case (w_state)
                 W_IDLE: begin
-                    awready <= 1'b1;
+                    awready <= !aw_done;
                     wready  <= 1'b1;
                     bvalid  <= 1'b0;
 
-                    // 锁存 AW
-                    if (awvalid && awready && !aw_got) begin
-                        aw_latch   <= awaddr;
-                        awid_latch <= awid;
-                        aw_got     <= 1'b1;
+                    // AW 握手
+                    if (awvalid && awready && !aw_done) begin
+                        w_addr_latch <= awaddr;
+                        w_len_latch  <= awlen;
+                        w_cnt        <= 8'd0;
+                        aw_done      <= 1'b1;
                     end
 
-                    // 锁存 W
-                    if (wvalid && wready && !w_got) begin
-                        wd_latch <= wdata;
-                        w_got    <= 1'b1;
-                    end
+                    // W 握手: 逐拍写入 DRAM, 地址自增
+                    if (wvalid && wready) begin
+                        dram[w_addr_latch[DRAM_AW+1:2]] <= wdata;
+                        w_addr_latch <= w_addr_latch + 32'd4;
+                        w_cnt        <= w_cnt + 8'd1;
 
-                    // 两个都就绪 → 写入 DRAM, 进入 RESP
-                    if (w_both_ready) begin
-                        // 地址: aw_got=1 用锁存, =0 用当拍
-                        dram[aw_got ? aw_latch[DRAM_AW+1:2]
-                                    : awaddr[DRAM_AW+1:2]]
-                            <= w_got ? wd_latch : wdata;
-
-                        aw_got  <= 1'b0;
-                        w_got   <= 1'b0;
-                        bid     <= awid_latch;
-                        bresp   <= 2'b00;
-                        w_state <= W_RESP;
+                        if (wlast) begin
+                            aw_done  <= 1'b0;
+                            w_state  <= W_RESP;
+                        end
                     end
                 end
 
@@ -242,6 +246,8 @@ module tb_core;
                     awready <= 1'b0;
                     wready  <= 1'b0;
                     bvalid  <= 1'b1;
+                    bresp   <= 2'b00;
+                    bid     <= 4'd1;
                     if (bvalid && bready) begin
                         bvalid  <= 1'b0;
                         w_state <= W_IDLE;
