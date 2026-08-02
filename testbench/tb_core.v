@@ -131,6 +131,8 @@ module tb_core;
     reg [ 7:0] r_cnt;             // 当前 beat 计数 (0 ~ arlen)
 
     // 组合读: r_data_comb 跟随 r_addr_latch 即时变化
+    wire [31:0] r_addr_next;
+    assign r_addr_next = r_addr_latch + 32'd4;
     wire [DRAM_AW-1:0] r_dram_idx;
     assign r_dram_idx = r_addr_latch[DRAM_AW+1:2];
     wire [31:0] r_data_comb;
@@ -154,6 +156,7 @@ module tb_core;
                 R_IDLE: begin
                     arready <= 1'b1;
                     rvalid  <= 1'b0;
+                    rlast   <= 1'b0;
                     if (arvalid && arready) begin
                         r_addr_latch <= araddr;
                         r_id_latch   <= arid;
@@ -168,16 +171,20 @@ module tb_core;
                     rvalid  <= 1'b1;
                     rresp   <= 2'b00;
                     rid     <= r_id_latch;
-                    rdata   <= r_data_comb;
                     rlast   <= (r_cnt == r_len);
 
                     if (rvalid && rready) begin
+                        // 握手成功: 地址+4, 预读下一拍数据避免重复
                         r_addr_latch <= r_addr_latch + 32'd4;
                         r_cnt        <= r_cnt + 8'd1;
+                        rdata        <= dram[r_addr_next[DRAM_AW+1:2]];
                         if (r_cnt == r_len) begin
                             rvalid  <= 1'b0;
                             r_state <= R_IDLE;
                         end
+                    end else begin
+                        // 首拍: 无握手, 驱动当前地址数据
+                        rdata <= r_data_comb;
                     end
                 end
 

@@ -29,14 +29,32 @@ module MEM_Stage #(
     output wire [DATA_WIDTH-1:0]     read_data,      // load 读出数据 (已扩展)
     output wire                      cpu_stall,      // dCache stall → 流水线
 
-    // ── 外部存储 (接 axi_bridge) ──
-    output wire                      ext_req,
-    output wire                      ext_we,
-    output wire [ADDR_WIDTH-1:0]     ext_addr,
-    output wire [DATA_WIDTH-1:0]     ext_wdata,
-    output wire [3:0]                ext_wstrb,
-    input  wire [DATA_WIDTH-1:0]     ext_rdata,
-    input  wire                      ext_ready
+    // ── AXI-R (dCache fill) ──
+    output wire                      arvalid,
+    output wire [ADDR_WIDTH-1:0]     araddr,
+    output wire [ 7:0]               arlen,
+    output wire [ 2:0]               arsize,
+    input  wire                      arready,
+    input  wire                      rvalid,
+    input  wire [DATA_WIDTH-1:0]     rdata,
+    input  wire [ 1:0]               rresp,
+    input  wire                      rlast,
+    output wire                      rready,
+    // ── AXI-W (dCache eviction) ──
+    output wire                      awvalid,
+    output wire [ADDR_WIDTH-1:0]     awaddr,
+    output wire [ 7:0]               awlen,
+    output wire [ 2:0]               awsize,
+    input  wire                      awready,
+    output wire                      wvalid,
+    output wire [DATA_WIDTH-1:0]     wdata,
+    output wire [ 3:0]               wstrb,
+    output wire                      wlast,
+    input  wire                      wready,
+    input  wire                      bvalid,
+    input  wire [ 1:0]               bresp,
+    input  wire [ 3:0]               bid,
+    output wire                      bready
 );
 
     // ============================================================
@@ -63,13 +81,30 @@ module MEM_Stage #(
         .cpu_rdata  (cache_rdata),
         .cpu_stall  (cpu_stall),
 
-        .ext_req    (ext_req),
-        .ext_we     (ext_we),
-        .ext_addr   (ext_addr),
-        .ext_wdata  (ext_wdata),
-        .ext_wstrb  (ext_wstrb),
-        .ext_rdata  (ext_rdata),
-        .ext_ready  (ext_ready)
+        .arvalid    (arvalid),
+        .araddr     (araddr),
+        .arlen      (arlen),
+        .arsize     (arsize),
+        .arready    (arready),
+        .rvalid     (rvalid),
+        .rdata      (rdata),
+        .rresp      (rresp),
+        .rlast      (rlast),
+        .rready     (rready),
+        .awvalid    (awvalid),
+        .awaddr     (awaddr),
+        .awlen      (awlen),
+        .awsize     (awsize),
+        .awready    (awready),
+        .wvalid     (wvalid),
+        .wdata      (wdata),
+        .wstrb      (wstrb),
+        .wlast      (wlast),
+        .wready     (wready),
+        .bvalid     (bvalid),
+        .bresp      (bresp),
+        .bid        (bid),
+        .bready     (bready)
     );
 
     // ============================================================
