@@ -424,24 +424,16 @@ module iCache #(
     // CPU Stall (组合逻辑)
     //   stall=0: S_IDLE+!cpu_req, S_IDLE+hit, S_DATA(!sdata_stall)
     //   stall=1: miss, FILL, RETRY
-    //   注册化以打破 pc_next → MMU → tag → hit_now → cpu_stall 组合环路
+    //   组合环路已通过 IF_Stage 的 pc_fetch 寄存器打破,
+    //   cpu_stall 改为纯组合逻辑以消除 1 拍延迟,
+    //   避免 miss 首拍 stall=0 导致 PC 抢跑跳过指令.
     // ============================================================
     wire sdata_stall;
     assign sdata_stall = (state == S_DATA) && cpu_req && !hit_now;
 
-    wire cpu_stall_next;
-    assign cpu_stall_next = !((state == S_IDLE && !cpu_req) ||
-                               (state == S_IDLE && cpu_req && hit_now) ||
-                               (state == S_DATA && !sdata_stall));
-
-    reg cpu_stall_reg;
-    always @(posedge clk) begin
-        if (!rst_n)
-            cpu_stall_reg <= 1'b0;
-        else
-            cpu_stall_reg <= cpu_stall_next;
-    end
-    assign cpu_stall = cpu_stall_reg;
+    assign cpu_stall = !((state == S_IDLE && !cpu_req) ||
+                          (state == S_IDLE && cpu_req && hit_now) ||
+                          (state == S_DATA && !sdata_stall));
 
     // ============================================================
     // 初始化

@@ -26,6 +26,19 @@ module IF_Stage (
 );
 
     // ============================================================
+    // PC 寄存器 — 打破 pc_next → MMU → tag → hit_now → cpu_stall
+    // 组合环路. 仅在 !if_stall 时更新, miss 期间保持冻结.
+    // 初始化为 0x1c000000 (LoongArch 复位向量).
+    // ============================================================
+    reg [31:0] pc_fetch;
+    always @(posedge clk) begin
+        if (!rst_n)
+            pc_fetch <= 32'h1c000000;
+        else if (!if_stall)
+            pc_fetch <= pc;
+    end
+
+    // ============================================================
     // iCache (64b data, 直接输出 dual_inst)
     // ============================================================
     iCache #(
@@ -37,8 +50,8 @@ module IF_Stage (
     ) u_icache (
         .clk        (clk),
         .rst_n      (rst_n),
-        .cpu_req    (1'b1),             // 始终请求, cache 内部处理 busy
-        .cpu_addr   ({pc[31:3], 3'b0}), // 8B 对齐
+        .cpu_req    (1'b1),                    // 始终请求, cache 内部处理 busy
+        .cpu_addr   ({pc_fetch[31:3], 3'b0}),  // 8B 对齐, 使用寄存器输出断环路
         .cpu_rdata  (dual_inst),
         .cpu_stall  (if_stall),
         .ext_req    (ext_req),
