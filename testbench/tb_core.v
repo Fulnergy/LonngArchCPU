@@ -115,15 +115,21 @@ module tb_core;
     // ============================================================
     // 读通道 (单进程 FSM，全部寄存器输出)
     //
-    //   IDLE: arready=1, rvalid=0
-    //         arvalid & arready → 锁存 addr/id → RESP
-    //   RESP: arready=0, rvalid=1, rdata = dram[addr]
+    //   IDLE: arready=1. arvalid & arready → 锁存 addr/id → RESP
+    //   RESP: arready=0, rvalid=1, rdata = 组合读 dram[latched_addr]
     //         rvalid & rready → IDLE
+    //
+    //   关键: rdata 用 assign 组合读 dram[r_addr_latch], 与 rvalid≤1
+    //        在同一 NBA 更新, 彻底消除寄存器预读引入的 delta-cycle 偏移.
     // ============================================================
     localparam R_IDLE = 1'b0, R_RESP = 1'b1;
     reg r_state;
     reg [31:0] r_addr_latch;
     reg [ 3:0] r_id_latch;
+
+    // 组合读: r_data_comb 跟随 r_addr_latch 即时变化
+    wire [31:0] r_data_comb;
+    assign r_data_comb = dram[r_addr_latch[DRAM_AW+1:2]];
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
@@ -153,7 +159,7 @@ module tb_core;
                     rlast   <= 1'b1;
                     rresp   <= 2'b00;
                     rid     <= r_id_latch;
-                    rdata   <= dram[r_addr_latch[DRAM_AW+1:2]];
+                    rdata   <= r_data_comb;
                     if (rvalid && rready) begin
                         rvalid  <= 1'b0;
                         r_state <= R_IDLE;
