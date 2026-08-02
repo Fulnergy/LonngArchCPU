@@ -1,15 +1,15 @@
 // ============================================================================
-// axi_bridge — AXI 转接桥 (iCache + dCache → AXI)
+// axi_bridge — AXI 转接桥 (纯组合 MUX + 仲裁)
 // ============================================================================
-//   LoongArch 规范:
-//     - arlen/awlen = 0 (单拍, 无 burst)
-//     - arid: 0=取指(iCache), 1=取数(dCache读)
-//     - awid/wid: 1=存数(dCache写), wlast=1
-//     - arcache/awcache = 0, arprot/awprot = 0
+//   iCache / dCache 各自输出简化 AXI 子集, bridge 负责:
+//     - 仲裁: dCache 优先级高于 iCache
+//     - MUX: 将选中 cache 的 AXI 信号直通到顶层
+//     - 状态: 仅 d_burst_active 寄存器跟踪 dCache burst 占用
 //
-//   Cache line fill: 每 word 独立 AXI 读事务 (16次 × 单拍)
-//   Cache write-back: 每 word 独立 AXI 写事务 (16次 × 单拍)
-//   仲裁: dCache 优先于 iCache
+//   与旧版区别:
+//     - 无 FSM, 无 ext_* 协议转换
+//     - 支持 burst (arlen/awlen 由 cache 控制, 通常=15)
+//     - 除 d_burst_active 外所有输出均为纯组合逻辑
 // ============================================================================
 
 module axi_bridge (
@@ -17,257 +17,203 @@ module axi_bridge (
     input  wire         rst_n,
 
     // ============================================================
-    // iCache 侧 (只读)
+    // iCache 侧 (只读 — AR + R)
     // ============================================================
-    input  wire         i_ext_req,
-    input  wire [31:0]  i_ext_addr,
-    output reg  [31:0]  i_ext_rdata,
-    output reg          i_ext_ready,
+    input  wire         i_arvalid,
+    input  wire [31:0]  i_araddr,
+    input  wire [ 7:0]  i_arlen,
+    input  wire [ 2:0]  i_arsize,
+    input  wire [ 1:0]  i_arburst,
+    output wire         i_arready,
+
+    output wire         i_rvalid,
+    output wire [31:0]  i_rdata,
+    output wire         i_rlast,
+    output wire [ 1:0]  i_rresp,
+    input  wire         i_rready,
 
     // ============================================================
-    // dCache 侧 (读写)
+    // dCache 侧 (读写 — AR + R + AW + W + B)
     // ============================================================
-    input  wire         d_ext_req,
-    input  wire         d_ext_we,
-    input  wire [31:0]  d_ext_addr,
-    input  wire [31:0]  d_ext_wdata,
-    input  wire [3:0]   d_ext_wstrb,
-    output reg  [31:0]  d_ext_rdata,
-    output reg          d_ext_ready,
+    input  wire         d_arvalid,
+    input  wire [31:0]  d_araddr,
+    input  wire [ 7:0]  d_arlen,
+    input  wire [ 2:0]  d_arsize,
+    input  wire [ 1:0]  d_arburst,
+    output wire         d_arready,
+
+    output wire         d_rvalid,
+    output wire [31:0]  d_rdata,
+    output wire         d_rlast,
+    output wire [ 1:0]  d_rresp,
+    input  wire         d_rready,
+
+    input  wire         d_awvalid,
+    input  wire [31:0]  d_awaddr,
+    input  wire [ 7:0]  d_awlen,
+    input  wire [ 2:0]  d_awsize,
+    input  wire [ 1:0]  d_awburst,
+    output wire         d_awready,
+
+    input  wire         d_wvalid,
+    input  wire [31:0]  d_wdata,
+    input  wire [ 3:0]  d_wstrb,
+    input  wire         d_wlast,
+    output wire         d_wready,
+
+    output wire         d_bvalid,
+    output wire [ 1:0]  d_bresp,
+    input  wire         d_bready,
 
     // ============================================================
-    // AXI Read Address
+    // AXI Read Address (顶层)
     // ============================================================
-    output reg  [ 3:0]  arid,
-    output reg  [31:0]  araddr,
-    output reg  [ 7:0]  arlen,
-    output reg  [ 2:0]  arsize,
-    output reg  [ 1:0]  arburst,
-    output reg  [ 1:0]  arlock,
-    output reg  [ 3:0]  arcache,
-    output reg  [ 2:0]  arprot,
-    output reg          arvalid,
+    output wire [ 3:0]  arid,
+    output wire [31:0]  araddr,
+    output wire [ 7:0]  arlen,
+    output wire [ 2:0]  arsize,
+    output wire [ 1:0]  arburst,
+    output wire [ 1:0]  arlock,
+    output wire [ 3:0]  arcache,
+    output wire [ 2:0]  arprot,
+    output wire         arvalid,
     input  wire         arready,
 
     // ============================================================
-    // AXI Read Data
+    // AXI Read Data (顶层)
     // ============================================================
     input  wire [ 3:0]  rid,
     input  wire [31:0]  rdata,
     input  wire [ 1:0]  rresp,
     input  wire         rlast,
     input  wire         rvalid,
-    output reg          rready,
+    output wire         rready,
 
     // ============================================================
-    // AXI Write Address
+    // AXI Write Address (顶层)
     // ============================================================
-    output reg  [ 3:0]  awid,
-    output reg  [31:0]  awaddr,
-    output reg  [ 7:0]  awlen,
-    output reg  [ 2:0]  awsize,
-    output reg  [ 1:0]  awburst,
-    output reg  [ 1:0]  awlock,
-    output reg  [ 3:0]  awcache,
-    output reg  [ 2:0]  awprot,
-    output reg          awvalid,
+    output wire [ 3:0]  awid,
+    output wire [31:0]  awaddr,
+    output wire [ 7:0]  awlen,
+    output wire [ 2:0]  awsize,
+    output wire [ 1:0]  awburst,
+    output wire [ 1:0]  awlock,
+    output wire [ 3:0]  awcache,
+    output wire [ 2:0]  awprot,
+    output wire         awvalid,
     input  wire         awready,
 
     // ============================================================
-    // AXI Write Data
+    // AXI Write Data (顶层)
     // ============================================================
-    output reg  [ 3:0]  wid,
-    output reg  [31:0]  wdata,
-    output reg  [ 3:0]  wstrb,
-    output reg          wlast,
-    output reg          wvalid,
+    output wire [ 3:0]  wid,
+    output wire [31:0]  wdata,
+    output wire [ 3:0]  wstrb,
+    output wire         wlast,
+    output wire         wvalid,
     input  wire         wready,
 
     // ============================================================
-    // AXI Write Response
+    // AXI Write Response (顶层)
     // ============================================================
     input  wire [ 3:0]  bid,
     input  wire [ 1:0]  bresp,
     input  wire         bvalid,
-    output reg          bready
+    output wire         bready
 );
 
     // ============================================================
-    // AXI 固定参数 (LoongArch 规范)
+    // 仲裁状态 — 唯一寄存器
+    //   d_burst_active: dCache 正在占用总线 (burst 进行中)
+    //   置位: dCache AR 或 AW 握手成功
+    //   清零: dCache R burst 完成 (rlast) 或 B 响应收到
     // ============================================================
-    localparam AXI_LEN_SINGLE = 8'd0;        // 单拍
-    localparam AXI_SIZE_WORD  = 3'b010;      // 4 bytes
-    localparam AXI_BURST_INCR = 2'b01;
-    localparam ID_IFETCH      = 4'd0;        // iCache 取指
-    localparam ID_DACCESS     = 4'd1;        // dCache 存取
-
-    // ============================================================
-    // 状态机
-    // ============================================================
-    reg [2:0] state, next_state;
-
-    localparam S_IDLE      = 3'd0;
-    localparam S_AR_REQ    = 3'd1;
-    localparam S_R_DATA    = 3'd2;
-    localparam S_AW_REQ    = 3'd3;
-    localparam S_W_DATA    = 3'd4;
-    localparam S_B_RESP    = 3'd5;
-
-    // ============================================================
-    // 仲裁: dCache 优先, 单拍事务 (无 burst, 无缓冲)
-    // ============================================================
-    reg  is_dcache;          // 当前事务: 1=dCache, 0=iCache
-    reg  is_write;           // 当前事务: 1=写, 0=读
-
-    wire d_take = d_ext_req;
-    wire i_take = i_ext_req && !d_ext_req;
+    reg d_burst_active;
 
     always @(posedge clk) begin
-        if (state == S_IDLE) begin
-            if (d_take) begin
-                is_dcache <= 1'b1;
-                is_write  <= d_ext_we;
-            end else if (i_take) begin
-                is_dcache <= 1'b0;
-                is_write  <= 1'b0;
-            end
+        if (!rst_n) begin
+            d_burst_active <= 1'b0;
+        end else begin
+            if (d_arvalid && d_arready)
+                d_burst_active <= 1'b1;
+            else if (d_awvalid && d_awready)
+                d_burst_active <= 1'b1;
+            else if (d_burst_active && d_rvalid && d_rready && d_rlast)
+                d_burst_active <= 1'b0;
+            else if (d_burst_active && d_bvalid && d_bready)
+                d_burst_active <= 1'b0;
         end
     end
 
-    // ============================================================
-    // cache ext 接口 (统一驱动, 单拍直通)
-    // ============================================================
-    always @(*) begin
-        i_ext_ready = 1'b0;
-        i_ext_rdata = 32'b0;
-        d_ext_ready = 1'b0;
-        d_ext_rdata = 32'b0;
-
-        case (state)
-            S_R_DATA: begin
-                if (rvalid) begin
-                    if (is_dcache) begin
-                        d_ext_ready = 1'b1;
-                        d_ext_rdata = rdata;
-                    end else begin
-                        i_ext_ready = 1'b1;
-                        i_ext_rdata = rdata;
-                    end
-                end
-            end
-
-            S_W_DATA: begin
-                if (is_write)
-                    d_ext_ready = wready;
-            end
-
-            default: ;
-        endcase
-    end
+    // dCache 当前是否 "拥有" AR 通道
+    wire d_ar_active;
+    assign d_ar_active = d_arvalid || d_awvalid || d_burst_active;
 
     // ============================================================
-    // 状态转移
+    // AR Channel — MUX: dCache > iCache
     // ============================================================
-    always @(posedge clk) begin
-        if (!rst_n)
-            state <= S_IDLE;
-        else
-            state <= next_state;
-    end
+    assign arid    = d_ar_active ? 4'd1 : 4'd0;
+    assign araddr  = d_ar_active ? d_araddr  : i_araddr;
+    assign arlen   = d_ar_active ? d_arlen   : i_arlen;
+    assign arsize  = d_ar_active ? d_arsize  : i_arsize;
+    assign arburst = d_ar_active ? d_arburst : i_arburst;
+    assign arlock  = 2'b00;
+    assign arcache = 4'b0000;
+    assign arprot  = 3'b000;
+    assign arvalid = d_ar_active ? d_arvalid : i_arvalid;
 
-    always @(*) begin
-        next_state = state;
-
-        case (state)
-            S_IDLE: begin
-                if (d_take && d_ext_we)
-                    next_state = S_AW_REQ;          // dCache write-back
-                else if (d_take || i_take)
-                    next_state = S_AR_REQ;          // fill
-            end
-
-            S_AR_REQ: begin
-                if (arready)
-                    next_state = S_R_DATA;
-            end
-
-            S_R_DATA: begin
-                if (rvalid)
-                    next_state = S_IDLE;            // 单拍完成
-            end
-
-            S_AW_REQ: begin
-                if (awready)
-                    next_state = S_W_DATA;
-            end
-
-            S_W_DATA: begin
-                if (wready)
-                    next_state = S_B_RESP;
-            end
-
-            S_B_RESP: begin
-                if (bvalid)
-                    next_state = S_IDLE;
-            end
-
-            default: next_state = S_IDLE;
-        endcase
-    end
+    assign i_arready = !d_ar_active && arready;
+    assign d_arready =  d_ar_active && arready;
 
     // ============================================================
-    // AXI AR 通道 (单拍读, arid 区分取指/取数)
+    // R Channel — DEMUX: 根据 d_burst_active 路由返回数据
+    //   注意: 必须用 d_burst_active (而非 d_ar_active),
+    //   因为 AR 握手后 d_arvalid 撤销但 R 数据还在返回中
     // ============================================================
-    always @(*) begin
-        arid    = is_dcache ? ID_DACCESS : ID_IFETCH;
-        araddr  = is_dcache ? d_ext_addr : i_ext_addr;
-        arlen   = AXI_LEN_SINGLE;
-        arsize  = AXI_SIZE_WORD;
-        arburst = AXI_BURST_INCR;
-        arlock  = 2'b00;
-        arcache = 4'b0000;
-        arprot  = 3'b000;
-        arvalid = (state == S_AR_REQ);
-    end
+    assign i_rvalid = !d_burst_active && rvalid;
+    assign i_rdata  = rdata;
+    assign i_rlast  = rlast;
+    assign i_rresp  = rresp;
+
+    assign d_rvalid = d_burst_active && rvalid;
+    assign d_rdata  = rdata;
+    assign d_rlast  = rlast;
+    assign d_rresp  = rresp;
+
+    assign rready = d_burst_active ? d_rready : i_rready;
 
     // ============================================================
-    // AXI R 通道
+    // AW Channel — 直通 (仅 dCache)
     // ============================================================
-    always @(*) begin
-        rready = (state == S_R_DATA);
-    end
+    assign awid    = 4'd1;
+    assign awaddr  = d_awaddr;
+    assign awlen   = d_awlen;
+    assign awsize  = d_awsize;
+    assign awburst = d_awburst;
+    assign awlock  = 2'b00;
+    assign awcache = 4'b0000;
+    assign awprot  = 3'b000;
+    assign awvalid = d_awvalid;
+
+    assign d_awready = awready;
 
     // ============================================================
-    // AXI AW 通道 (单拍写, awid=1)
+    // W Channel — 直通 (仅 dCache)
     // ============================================================
-    always @(*) begin
-        awid    = ID_DACCESS;
-        awaddr  = d_ext_addr;
-        awlen   = AXI_LEN_SINGLE;
-        awsize  = AXI_SIZE_WORD;
-        awburst = AXI_BURST_INCR;
-        awlock  = 2'b00;
-        awcache = 4'b0000;
-        awprot  = 3'b000;
-        awvalid = (state == S_AW_REQ);
-    end
+    assign wid    = 4'd1;
+    assign wdata  = d_wdata;
+    assign wstrb  = d_wstrb;
+    assign wlast  = d_wlast;
+    assign wvalid = d_wvalid;
+
+    assign d_wready = wready;
 
     // ============================================================
-    // AXI W 通道 (单拍写, wid=1, wlast=1)
+    // B Channel — 直通 (仅 dCache)
     // ============================================================
-    always @(*) begin
-        wid    = ID_DACCESS;
-        wdata  = d_ext_wdata;
-        wstrb  = d_ext_wstrb;
-        wlast  = 1'b1;                              // 单拍恒为最后一拍
-        wvalid = (state == S_W_DATA) && d_ext_req && d_ext_we;
-    end
+    assign d_bvalid = bvalid;
+    assign d_bresp  = bresp;
 
-    // ============================================================
-    // AXI B 通道
-    // ============================================================
-    always @(*) begin
-        bready = (state == S_B_RESP);
-    end
+    assign bready = d_bready;
 
 endmodule

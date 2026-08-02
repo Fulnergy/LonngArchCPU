@@ -29,14 +29,32 @@ module MEM_Stage #(
     output wire [DATA_WIDTH-1:0]     read_data,      // load 读出数据 (已扩展)
     output wire                      cpu_stall,      // dCache stall → 流水线
 
-    // ── 外部存储 (接 axi_bridge) ──
-    output wire                      ext_req,
-    output wire                      ext_we,
-    output wire [ADDR_WIDTH-1:0]     ext_addr,
-    output wire [DATA_WIDTH-1:0]     ext_wdata,
-    output wire [3:0]                ext_wstrb,
-    input  wire [DATA_WIDTH-1:0]     ext_rdata,
-    input  wire                      ext_ready
+    // ── 外部存储 (dCache AXI, 接 axi_bridge) ──
+    output wire                      d_arvalid,
+    output wire [ADDR_WIDTH-1:0]     d_araddr,
+    output wire [ 7:0]               d_arlen,
+    output wire [ 2:0]               d_arsize,
+    output wire [ 1:0]               d_arburst,
+    input  wire                      d_arready,
+    input  wire                      d_rvalid,
+    input  wire [DATA_WIDTH-1:0]     d_rdata,
+    input  wire                      d_rlast,
+    input  wire [ 1:0]               d_rresp,
+    output wire                      d_rready,
+    output wire                      d_awvalid,
+    output wire [ADDR_WIDTH-1:0]     d_awaddr,
+    output wire [ 7:0]               d_awlen,
+    output wire [ 2:0]               d_awsize,
+    output wire [ 1:0]               d_awburst,
+    input  wire                      d_awready,
+    output wire                      d_wvalid,
+    output wire [DATA_WIDTH-1:0]     d_wdata,
+    output wire [3:0]                d_wstrb,
+    output wire                      d_wlast,
+    input  wire                      d_wready,
+    input  wire                      d_bvalid,
+    input  wire [ 1:0]               d_bresp,
+    output wire                      d_bready
 );
 
     // ============================================================
@@ -63,13 +81,31 @@ module MEM_Stage #(
         .cpu_rdata  (cache_rdata),
         .cpu_stall  (cpu_stall),
 
-        .ext_req    (ext_req),
-        .ext_we     (ext_we),
-        .ext_addr   (ext_addr),
-        .ext_wdata  (ext_wdata),
-        .ext_wstrb  (ext_wstrb),
-        .ext_rdata  (ext_rdata),
-        .ext_ready  (ext_ready)
+        .d_arvalid  (d_arvalid),
+        .d_araddr   (d_araddr),
+        .d_arlen    (d_arlen),
+        .d_arsize   (d_arsize),
+        .d_arburst  (d_arburst),
+        .d_arready  (d_arready),
+        .d_rvalid   (d_rvalid),
+        .d_rdata    (d_rdata),
+        .d_rlast    (d_rlast),
+        .d_rresp    (d_rresp),
+        .d_rready   (d_rready),
+        .d_awvalid  (d_awvalid),
+        .d_awaddr   (d_awaddr),
+        .d_awlen    (d_awlen),
+        .d_awsize   (d_awsize),
+        .d_awburst  (d_awburst),
+        .d_awready  (d_awready),
+        .d_wvalid   (d_wvalid),
+        .d_wdata    (d_wdata),
+        .d_wstrb    (d_wstrb),
+        .d_wlast    (d_wlast),
+        .d_wready   (d_wready),
+        .d_bvalid   (d_bvalid),
+        .d_bresp    (d_bresp),
+        .d_bready   (d_bready)
     );
 
     // ============================================================

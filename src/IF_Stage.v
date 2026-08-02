@@ -15,14 +15,19 @@ module IF_Stage (
     output wire [63:0]  dual_inst,       // {inst_hi, inst_lo}
     output wire         if_stall,        // IF 级 stall
 
-    // ── 外部存储 (iCache, 接 axi_bridge) ──
-    output wire         ext_req,
-    output wire         ext_we,
-    output wire [31:0]  ext_addr,
-    output wire [31:0]  ext_wdata,
-    output wire [3:0]   ext_wstrb,
-    input  wire [31:0]  ext_rdata,
-    input  wire         ext_ready
+    // ── 外部存储 (iCache AXI, 接 axi_bridge) ──
+    output wire         i_arvalid,
+    output wire [31:0]  i_araddr,
+    output wire [ 7:0]  i_arlen,
+    output wire [ 2:0]  i_arsize,
+    output wire [ 1:0]  i_arburst,
+    input  wire         i_arready,
+
+    input  wire         i_rvalid,
+    input  wire [31:0]  i_rdata,
+    input  wire         i_rlast,
+    input  wire [ 1:0]  i_rresp,
+    output wire         i_rready
 );
 
     // ============================================================
@@ -54,13 +59,17 @@ module IF_Stage (
         .cpu_addr   ({pc_fetch[31:3], 3'b0}),  // 8B 对齐, 使用寄存器输出断环路
         .cpu_rdata  (dual_inst),
         .cpu_stall  (if_stall),
-        .ext_req    (ext_req),
-        .ext_we     (ext_we),
-        .ext_addr   (ext_addr),
-        .ext_wdata  (ext_wdata),
-        .ext_wstrb  (ext_wstrb),
-        .ext_rdata  (ext_rdata),
-        .ext_ready  (ext_ready)
+        .i_arvalid  (i_arvalid),
+        .i_araddr   (i_araddr),
+        .i_arlen    (i_arlen),
+        .i_arsize   (i_arsize),
+        .i_arburst  (i_arburst),
+        .i_arready  (i_arready),
+        .i_rvalid   (i_rvalid),
+        .i_rdata    (i_rdata),
+        .i_rlast    (i_rlast),
+        .i_rresp    (i_rresp),
+        .i_rready   (i_rready)
     );
 
 endmodule
