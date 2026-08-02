@@ -5,11 +5,11 @@
 //   - 2路组相联, NUM_SETS*2 行 (默认 128组×2路 = 256行)
 //   - Cache line: LINE_SIZE_BYTES (默认 64B = 8 words × 64b)
 //   - Data: 64b BRAM, 直接输出 dual_inst 指令对
-//   - Fill: 2次 32b AXI 读 → 拼装 1个 64b BRAM 字 (half_buf)
+//   - Fill: 1次 AXI burst 读 (16 beats × 32b) → 拼装 8个 64b BRAM 字
 //   - 替换策略: invalid 优先 + LRU (2路1bit伪LRU)
 //   - Tag: distributed RAM (异步读, 0拍组合判定 hit/miss)
 //   - Data: block RAM (同步读, 1拍)
-//   - 外部存储侧: ext_ready 握手 (ext_we 恒为0, 仅读)
+//   - 外部存储侧: AXI-R burst 接口 (arvalid/rvalid 握手)
 //
 // ── 与 dCache 的区别 ──
 //   1. 无 cpu_we / cpu_wdata / cpu_wstrb (只读)
@@ -40,14 +40,18 @@ module iCache #(
     output reg  [DATA_WIDTH-1:0]    cpu_rdata,
     output wire                     cpu_stall,
 
-    // ── 外部存储侧 (只读, AXI 32b) ──
-    output reg                      ext_req,
-    output reg                      ext_we,
-    output reg  [ADDR_WIDTH-1:0]    ext_addr,
-    output reg  [31:0]              ext_wdata,
-    output reg  [3:0]               ext_wstrb,
-    input  wire [31:0]              ext_rdata,
-    input  wire                     ext_ready
+    // ── 外部存储侧 (AXI-R burst, 只读) ──
+    output reg                      arvalid,
+    output reg  [ADDR_WIDTH-1:0]    araddr,
+    output reg  [ 7:0]              arlen,
+    output reg  [ 2:0]              arsize,
+    input  wire                     arready,
+
+    input  wire                     rvalid,
+    input  wire [31:0]              rdata,
+    input  wire [ 1:0]              rresp,
+    input  wire                     rlast,
+    output reg                      rready
 );
 
     // ============================================================
@@ -69,8 +73,8 @@ module iCache #(
 
     localparam S_IDLE       = 3'd0;
     localparam S_DATA       = 3'd1;
-    localparam S_FILL_REQ   = 3'd2;
-    localparam S_FILL_WR    = 3'd3;
+    localparam S_AR_REQ     = 3'd2;
+    localparam S_BURST_RD   = 3'd3;
     localparam S_RETRY      = 3'd4;
 
     // ============================================================
@@ -219,15 +223,25 @@ module iCache #(
 
     // ============================================================
     // 字计数器 (64b BRAM word, 0-7)
-    //   填充时每 2 次 ext 读拼 1 个 BRAM 字
+    //   burst 每拍 rvalid 到达一个 32b word, 2拍拼 1 个 64b BRAM 字
     // ============================================================
     reg [WORD_OFFSET_WIDTH-1:0] word_cnt;   // 3b, 0-7
     reg                         half_lo;    // 0=等待低32b, 1=低32b已锁存等高位
     reg [31:0]                  half_buf;   // 低32b暂存
-    reg [31:0]                  ext_rdata_latched; // ext_ready=1 时锁存, 供 S_FILL_WR 使用
+    reg [31:0]                  rdata_latched; // rvalid=1 时锁存, 供 BRAM 拼装
 
     wire word_cnt_last;
     assign word_cnt_last = (word_cnt == WORDS_PER_LINE - 1);
+    wire burst_done;
+    assign burst_done = rvalid && rready && rlast;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            rdata_latched <= 32'b0;
+        end else if (rvalid && rready) begin
+            rdata_latched <= rdata;
+        end
+    end
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -236,19 +250,20 @@ module iCache #(
             half_buf <= 32'b0;
         end else begin
             case (state)
-                S_FILL_WR: begin
-                    if (!half_lo) begin
-                        // 锁存低半字
-                        half_buf <= ext_rdata_latched;
-                        half_lo  <= 1'b1;
-                    end else begin
-                        // 拼装高半字, 下一个 BRAM word
-                        half_lo <= 1'b0;
-                        if (!word_cnt_last)
-                            word_cnt <= word_cnt + 1;
+                S_BURST_RD: begin
+                    if (rvalid && rready) begin
+                        if (!half_lo) begin
+                            half_buf <= rdata;
+                            half_lo  <= 1'b1;
+                        end else begin
+                            half_lo <= 1'b0;
+                            if (!word_cnt_last)
+                                word_cnt <= word_cnt + 1;
+                            // last word: word_cnt stays, transition handled by next_state
+                        end
                     end
                 end
-                S_FILL_REQ: ;               // 保持, 不重置 word_cnt/half_lo
+                // S_AR_REQ: 保持上次残值 (从 default 清零后, burst 重新开始)
                 default: begin
                     word_cnt <= 0;
                     half_lo  <= 1'b0;
@@ -257,22 +272,12 @@ module iCache #(
         end
     end
 
-    // ext_rdata 只在 ext_ready=1 时有效, 下一拍 bridge 已归 S_IDLE
-    // 在有效周期锁存, 供 S_FILL_WR 使用
-    always @(posedge clk) begin
-        if (ext_ready)
-            ext_rdata_latched <= ext_rdata;
-    end
-
     // ============================================================
     // 地址计算
     // ============================================================
     wire [ADDR_WIDTH-1:0] req_line_base;
-    wire [ADDR_WIDTH-1:0] word_addr_offset;
 
-    assign req_line_base    = {req_tag, req_set, {LINE_OFFSET_WIDTH{1'b0}}};
-    // ext_addr: 32b 对齐, offset = word*8 + half*4
-    assign word_addr_offset = {word_cnt, half_lo, 2'b00};
+    assign req_line_base = {req_tag, req_set, {LINE_OFFSET_WIDTH{1'b0}}};
 
     // ============================================================
     // BRAM 地址 & 写控制 (组合逻辑)
@@ -290,16 +295,13 @@ module iCache #(
         data_wr_data = 0;
 
         case (state)
-            S_FILL_WR: begin
+            S_BURST_RD: begin
                 data_addr  = {req_set, word_cnt};
-                if (!half_lo) begin
-                    // 等待高半字, 不写 BRAM
-                    data_wr_en = 1'b0;
-                end else begin
-                    // 拼装 64b: {ext_rdata_latched, half_buf}
+                if (rvalid && rready && half_lo) begin
+                    // 有完整 64b: {rdata, half_buf} → 写 BRAM
                     data_wr_en   = 1'b1;
                     data_wr_way  = victim_way;
-                    data_wr_data = {ext_rdata_latched, half_buf};
+                    data_wr_data = {rdata, half_buf};
 
                     if (word_cnt_last) begin
                         tag_wr_en   = 1'b1;
@@ -320,31 +322,20 @@ module iCache #(
     always @(posedge clk) begin
         if ((is_req_taken || state == S_RETRY) && hit_now) begin
             lru[active_set] <= hit0;
-        end else if (state == S_FILL_WR && half_lo && word_cnt_last) begin
+        end else if (state == S_BURST_RD && rvalid && rready && half_lo && word_cnt_last) begin
             lru[req_set] <= ~victim_way;
         end
     end
 
     // ============================================================
-    // 外部存储接口 (只读)
+    // AXI-R 接口 (只读 burst)
     // ============================================================
     always @(*) begin
-        ext_req   = 1'b0;
-        ext_we    = 1'b0;
-        ext_addr  = 0;
-        ext_wdata = 0;
-        ext_wstrb = 4'b0000;
-
-        case (state)
-            S_FILL_REQ: begin
-                if (!ext_ready) begin
-                    ext_req  = 1'b1;
-                end
-                ext_addr  = req_line_base + word_addr_offset;
-            end
-
-            default: ;
-        endcase
+        arvalid = (state == S_AR_REQ);
+        araddr  = req_line_base;
+        arlen   = 8'd15;                    // 16 beats
+        arsize  = 3'b010;                   // 4 bytes
+        rready  = (state == S_BURST_RD);
     end
 
     // ============================================================
@@ -365,37 +356,34 @@ module iCache #(
             S_IDLE: begin
                 if (cpu_req) begin
                     if (hit_now)
-                        next_state = S_DATA;        // 命中 → 等 data BRAM
+                        next_state = S_DATA;
                     else
-                        next_state = S_FILL_REQ;    // 缺失 → 填充 (无逐出)
+                        next_state = S_AR_REQ;      // 缺失 → burst fill
                 end
             end
 
-            // ── S_DATA: data BRAM 输出到达 ──
             S_DATA: begin
                 if (cpu_req) begin
                     if (hit_now)
-                        next_state = S_DATA;        // 背靠背读命中
+                        next_state = S_DATA;
                     else
-                        next_state = S_FILL_REQ;    // 背靠背缺失
+                        next_state = S_AR_REQ;      // 背靠背缺失
                 end else begin
                     next_state = S_IDLE;
                 end
             end
 
-            // ── 填充 ──
-            S_FILL_REQ: begin
-                if (ext_ready)
-                    next_state = S_FILL_WR;
+            // ── Burst fill ──
+            S_AR_REQ: begin
+                if (arready)
+                    next_state = S_BURST_RD;
             end
 
-            S_FILL_WR: begin
-                if (!half_lo)
-                    next_state = S_FILL_REQ;        // 还需读高半字
-                else if (word_cnt_last)
-                    next_state = S_RETRY;           // 最后 1 字完成
-                else
-                    next_state = S_FILL_REQ;        // 下一个 64b 字
+            S_BURST_RD: begin
+                // 每拍 rvalid 到达一个 32b, 2 拍拼 1 个 64b
+                // 末拍且已完成最后一个 BRAM word → S_RETRY
+                if (burst_done && word_cnt_last)
+                    next_state = S_RETRY;
             end
 
             // ── S_RETRY: tag 刚刚有效, 重读 BRAM ──

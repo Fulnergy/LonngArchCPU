@@ -66,14 +66,32 @@ wire        if_stall;                   // iCache stall → pipeline
 wire        dcache_stall;               // dCache stall → pipeline
 wire [ 3:0] mem_write_strb;            // 字节写使能
 
-// ── cache → axi_bridge ──
-wire        i_ext_req,  d_ext_req;
-wire        d_ext_we;
-wire [31:0] i_ext_addr, d_ext_addr;
-wire [31:0] d_ext_wdata;
-wire [ 3:0] d_ext_wstrb;
-wire [31:0] i_ext_rdata, d_ext_rdata;
-wire        i_ext_ready, d_ext_ready;
+// ── cache → axi_bridge (AXI burst) ──
+wire        i_arvalid,  d_arvalid;
+wire [31:0] i_araddr,   d_araddr;
+wire [ 7:0] i_arlen,    d_arlen;
+wire [ 2:0] i_arsize,   d_arsize;
+wire        i_arready,  d_arready;
+wire        i_rvalid,   d_rvalid;
+wire [31:0] i_rdata,    d_rdata;
+wire [ 1:0] i_rresp,    d_rresp;
+wire        i_rlast,    d_rlast;
+wire        i_rready,   d_rready;
+// dCache write
+wire        d_awvalid;
+wire [31:0] d_awaddr;
+wire [ 7:0] d_awlen;
+wire [ 2:0] d_awsize;
+wire        d_awready;
+wire        d_wvalid;
+wire [31:0] d_wdata;
+wire [ 3:0] d_wstrb;
+wire        d_wlast;
+wire        d_wready;
+wire        d_bvalid;
+wire [ 1:0] d_bresp;
+wire [ 3:0] d_bid;
+wire        d_bready;
 
 
 // ID Stage 输出
@@ -163,13 +181,16 @@ IF_Stage uif (
     .pc         (if_pa),
     .dual_inst  (dual_inst_raw),
     .if_stall   (if_stall),
-    .ext_req    (i_ext_req),
-    .ext_we     (),
-    .ext_addr   (i_ext_addr),
-    .ext_wdata  (),
-    .ext_wstrb  (),
-    .ext_rdata  (i_ext_rdata),
-    .ext_ready  (i_ext_ready)
+    .arvalid    (i_arvalid),
+    .araddr     (i_araddr),
+    .arlen      (i_arlen),
+    .arsize     (i_arsize),
+    .arready    (i_arready),
+    .rvalid     (i_rvalid),
+    .rdata      (i_rdata),
+    .rresp      (i_rresp),
+    .rlast      (i_rlast),
+    .rready     (i_rready)
 );
 
 wire [31:0] pc_low_id;
@@ -651,13 +672,30 @@ MEM_Stage umem (
     .addr_low_wb(memAddr_low_wb),
     .read_data  (memRdata_ls_wb),
     .cpu_stall  (dcache_stall),
-    .ext_req    (d_ext_req),
-    .ext_we     (d_ext_we),
-    .ext_addr   (d_ext_addr),
-    .ext_wdata  (d_ext_wdata),
-    .ext_wstrb  (d_ext_wstrb),
-    .ext_rdata  (d_ext_rdata),
-    .ext_ready  (d_ext_ready)
+    .arvalid    (d_arvalid),
+    .araddr     (d_araddr),
+    .arlen      (d_arlen),
+    .arsize     (d_arsize),
+    .arready    (d_arready),
+    .rvalid     (d_rvalid),
+    .rdata      (d_rdata),
+    .rresp      (d_rresp),
+    .rlast      (d_rlast),
+    .rready     (d_rready),
+    .awvalid    (d_awvalid),
+    .awaddr     (d_awaddr),
+    .awlen      (d_awlen),
+    .awsize     (d_awsize),
+    .awready    (d_awready),
+    .wvalid     (d_wvalid),
+    .wdata      (d_wdata),
+    .wstrb      (d_wstrb),
+    .wlast      (d_wlast),
+    .wready     (d_wready),
+    .bvalid     (d_bvalid),
+    .bresp      (d_bresp),
+    .bid        (d_bid),
+    .bready     (d_bready)
 );
 
 // ── MEM 级 byte write strobe ──
@@ -673,18 +711,42 @@ axi_bridge u_axi_bridge (
     .clk         (clk),
     .rst_n       (rst_n),
 
-    .i_ext_req   (i_ext_req),
-    .i_ext_addr  (i_ext_addr),
-    .i_ext_rdata (i_ext_rdata),
-    .i_ext_ready (i_ext_ready),
+    .i_arvalid   (i_arvalid),
+    .i_araddr    (i_araddr),
+    .i_arlen     (i_arlen),
+    .i_arsize    (i_arsize),
+    .i_arready   (i_arready),
+    .i_rvalid    (i_rvalid),
+    .i_rdata     (i_rdata),
+    .i_rresp     (i_rresp),
+    .i_rlast     (i_rlast),
+    .i_rready    (i_rready),
 
-    .d_ext_req   (d_ext_req),
-    .d_ext_we    (d_ext_we),
-    .d_ext_addr  (d_ext_addr),
-    .d_ext_wdata (d_ext_wdata),
-    .d_ext_wstrb (d_ext_wstrb),
-    .d_ext_rdata (d_ext_rdata),
-    .d_ext_ready (d_ext_ready),
+    .d_arvalid   (d_arvalid),
+    .d_araddr    (d_araddr),
+    .d_arlen     (d_arlen),
+    .d_arsize    (d_arsize),
+    .d_arready   (d_arready),
+    .d_rvalid    (d_rvalid),
+    .d_rdata     (d_rdata),
+    .d_rresp     (d_rresp),
+    .d_rlast     (d_rlast),
+    .d_rready    (d_rready),
+
+    .d_awvalid   (d_awvalid),
+    .d_awaddr    (d_awaddr),
+    .d_awlen     (d_awlen),
+    .d_awsize    (d_awsize),
+    .d_awready   (d_awready),
+    .d_wvalid    (d_wvalid),
+    .d_wdata     (d_wdata),
+    .d_wstrb     (d_wstrb),
+    .d_wlast     (d_wlast),
+    .d_wready    (d_wready),
+    .d_bvalid    (d_bvalid),
+    .d_bresp     (d_bresp),
+    .d_bid       (d_bid),
+    .d_bready    (d_bready),
 
     .arid    (arid),
     .araddr  (araddr),

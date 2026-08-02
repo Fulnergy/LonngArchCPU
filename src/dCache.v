@@ -57,16 +57,36 @@ module dCache #(
     output reg  [DATA_WIDTH-1:0]    cpu_rdata,
     output wire                     cpu_stall,
 
-    // ============================================================
-    // 外部存储侧
-    // ============================================================
-    output reg                      ext_req,
-    output reg                      ext_we,
-    output reg  [ADDR_WIDTH-1:0]    ext_addr,
-    output reg  [DATA_WIDTH-1:0]    ext_wdata,
-    output reg  [3:0]               ext_wstrb,
-    input  wire [DATA_WIDTH-1:0]    ext_rdata,
-    input  wire                     ext_ready
+    // ── AXI-R (读 burst, fill) ──
+    output reg                      arvalid,
+    output reg  [ADDR_WIDTH-1:0]    araddr,
+    output reg  [ 7:0]              arlen,
+    output reg  [ 2:0]              arsize,
+    input  wire                     arready,
+
+    input  wire                     rvalid,
+    input  wire [DATA_WIDTH-1:0]    rdata,
+    input  wire [ 1:0]              rresp,
+    input  wire                     rlast,
+    output reg                      rready,
+
+    // ── AXI-W (写 burst, eviction) ──
+    output reg                      awvalid,
+    output reg  [ADDR_WIDTH-1:0]    awaddr,
+    output reg  [ 7:0]              awlen,
+    output reg  [ 2:0]              awsize,
+    input  wire                     awready,
+
+    output reg                      wvalid,
+    output reg  [DATA_WIDTH-1:0]    wdata,
+    output reg  [ 3:0]              wstrb,
+    output reg                      wlast,
+    input  wire                     wready,
+
+    input  wire                     bvalid,
+    input  wire [ 1:0]              bresp,
+    input  wire [ 3:0]              bid,
+    output reg                      bready
 );
 
     // ============================================================
@@ -91,10 +111,10 @@ module dCache #(
     localparam S_DATA       = 4'd1;
     localparam S_HIT_WR     = 4'd2;
     localparam S_EVICT_RD   = 4'd3;
-    localparam S_EVICT_WR   = 4'd4;
-    localparam S_EVICT_DONE = 4'd5;
-    localparam S_FILL_REQ   = 4'd6;
-    localparam S_FILL_WR    = 4'd7;
+    localparam S_AW_REQ     = 4'd4;
+    localparam S_BURST_WR   = 4'd5;
+    localparam S_AR_REQ     = 4'd6;
+    localparam S_BURST_RD   = 4'd7;
     localparam S_RETRY      = 4'd8;
 
     // ============================================================
@@ -263,33 +283,34 @@ module dCache #(
     end
 
     // ============================================================
-    // 字计数器
+    // 字计数器 (burst 适配)
     // ============================================================
     reg [CNT_WIDTH-1:0] word_cnt;
-    reg [DATA_WIDTH-1:0] ext_rdata_latched; // ext_ready=1 时锁存, 供 S_FILL_WR 使用
+    reg [DATA_WIDTH-1:0] rdata_latched; // rvalid=1 时锁存, 供 BRAM 写入
+    reg [DATA_WIDTH-1:0] evict_data_reg; // 逐出数据暂存 (BRAM→AXI-W)
     wire word_cnt_last;
     assign word_cnt_last = (word_cnt == WORDS_PER_LINE - 1);
+    wire burst_rd_done;
+    assign burst_rd_done = rvalid && rready && rlast;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            rdata_latched <= 32'b0;
+        end else if (rvalid && rready) begin
+            rdata_latched <= rdata;
+        end
+    end
 
     always @(posedge clk) begin
         if (!rst_n) begin
             word_cnt <= 0;
         end else begin
             case (state)
-                S_EVICT_WR: if (ext_ready) word_cnt <= word_cnt + 1;
-                S_FILL_WR:           word_cnt <= word_cnt + 1;
-                // 循环中间拍保持 word_cnt:
-                S_EVICT_RD, S_EVICT_DONE, S_FILL_REQ: ;
-                // 新操作开始时清零:
-                default: word_cnt <= 0;
+                S_BURST_RD: if (rvalid && rready) word_cnt <= word_cnt + 1;
+                S_BURST_WR: if (wvalid && wready) word_cnt <= word_cnt + 1;
+                default:    word_cnt <= 0;
             endcase
         end
-    end
-
-    // ext_rdata 只在 ext_ready=1 时有效, 下一拍 bridge 已归 S_IDLE
-    // 在有效周期锁存, 供 S_FILL_WR 使用
-    always @(posedge clk) begin
-        if (ext_ready)
-            ext_rdata_latched <= ext_rdata;
     end
 
     // ============================================================
@@ -320,8 +341,13 @@ module dCache #(
         end
     endgenerate
 
-    wire [DATA_WIDTH-1:0] evict_data;
     assign evict_data = victim_way ? data_bram1_dout : data_bram0_dout;
+
+    // evict_data 在 S_EVICT_RD 时从 BRAM 锁存
+    always @(posedge clk) begin
+        if (state == S_EVICT_RD)
+            evict_data_reg <= evict_data;
+    end
 
     // ============================================================
     // BRAM 地址 & 写控制 (组合逻辑)
@@ -355,13 +381,13 @@ module dCache #(
                 tag_wr_data = {1'b1, 1'b1, req_tag};
             end
 
-            S_FILL_WR: begin
+            S_BURST_RD: begin
                 data_addr    = {req_set, word_cnt[WORD_OFFSET_WIDTH-1:0]};
-                data_wr_en   = 1'b1;
+                data_wr_en   = rvalid && rready;
                 data_wr_way  = victim_way;
-                data_wr_data = ext_rdata_latched;
+                data_wr_data = rdata;
 
-                if (word_cnt_last) begin
+                if (rvalid && rready && word_cnt_last) begin
                     tag_wr_en   = 1'b1;
                     tag_wr_way  = victim_way;
                     tag_wr_addr = req_set;
@@ -379,43 +405,36 @@ module dCache #(
     always @(posedge clk) begin
         if ((is_req_taken || state == S_RETRY) && (hit0 || hit1)) begin
             lru[active_set] <= hit0;
-        end else if (state == S_FILL_WR && word_cnt_last) begin
+        end else if (state == S_BURST_RD && rvalid && rready && word_cnt_last) begin
             lru[req_set] <= ~victim_way;
         end
     end
 
     // ============================================================
-    // 外部存储接口
+    // AXI 接口
     // ============================================================
     always @(*) begin
-        ext_req   = 1'b0;
-        ext_we    = 1'b0;
-        ext_addr  = 0;
-        ext_wdata = 0;
-        ext_wstrb = 4'b1111;
+        // AR (读 burst, fill)
+        arvalid = (state == S_AR_REQ);
+        araddr  = req_line_base;
+        arlen   = 8'd15;
+        arsize  = 3'b010;
+        rready  = (state == S_BURST_RD);
 
-        case (state)
-            S_EVICT_WR: begin
-                // 仅在第一周期断言, 避免 ext_ready=1 时重复
-                if (!ext_ready) begin
-                    ext_req   = 1'b1;
-                    ext_we    = 1'b1;
-                end
-                ext_addr  = victim_line_base + word_addr_offset;
-                ext_wdata = evict_data;
-                ext_wstrb = 4'b1111;
-            end
+        // AW (写 burst, eviction)
+        awvalid = (state == S_AW_REQ);
+        awaddr  = victim_line_base;
+        awlen   = 8'd15;
+        awsize  = 3'b010;
 
-            S_FILL_REQ: begin
-                if (!ext_ready) begin
-                    ext_req   = 1'b1;
-                    ext_we    = 1'b0;
-                end
-                ext_addr  = req_line_base + word_addr_offset;
-            end
+        // W (写数据)
+        wvalid  = (state == S_BURST_WR);
+        wdata   = evict_data_reg;
+        wstrb   = 4'b1111;
+        wlast   = (state == S_BURST_WR) && word_cnt_last;
 
-            default: ;
-        endcase
+        // B (写响应)
+        bready  = (state == S_BURST_WR);
     end
 
     // ============================================================
@@ -437,78 +456,70 @@ module dCache #(
                 if (cpu_req) begin
                     if (hit0 || hit1) begin
                         if (cpu_we)
-                            next_state = S_HIT_WR;   // 写命中 → RMW
+                            next_state = S_HIT_WR;
                         else
-                            next_state = S_DATA;      // 读命中 → 等 data BRAM
+                            next_state = S_DATA;
                     end else begin
                         next_state = victim_dirty_comb
                                      ? S_EVICT_RD
-                                     : S_FILL_REQ;    // miss → 逐出或填充
+                                     : S_AR_REQ;
                     end
                 end
             end
 
-            // ── S_DATA: data BRAM 输出到达 ──
-            //   若新请求命中 → 直接流水化, 无需回 S_IDLE
             S_DATA: begin
                 if (cpu_req) begin
                     if (hit0 || hit1) begin
                         if (cpu_we)
-                            next_state = S_HIT_WR;   // 读→写命中: RMW
+                            next_state = S_HIT_WR;
                         else
-                            next_state = S_DATA;      // 读→读命中: 背靠背
+                            next_state = S_DATA;
                     end else begin
                         next_state = victim_dirty_comb
                                      ? S_EVICT_RD
-                                     : S_FILL_REQ;    // 缺失: 逐出/填充
+                                     : S_AR_REQ;
                     end
                 end else begin
                     next_state = S_IDLE;
                 end
             end
 
-            // ── S_HIT_WR: data BRAM 输出到达, RMW 完成 ──
             S_HIT_WR: begin
                 next_state = S_IDLE;
             end
 
-            // ── 逐出 ──
+            // ── 逐出 (burst write) ──
             S_EVICT_RD: begin
-                next_state = S_EVICT_WR;
+                next_state = S_AW_REQ;
             end
 
-            S_EVICT_WR: begin
-                if (ext_ready) begin
-                    if (word_cnt_last)
-                        next_state = S_EVICT_DONE;
-                    else
-                        next_state = S_EVICT_RD;
-                end
+            S_AW_REQ: begin
+                if (awready)
+                    next_state = S_BURST_WR;
             end
 
-            S_EVICT_DONE: begin
-                next_state = S_FILL_REQ;
+            S_BURST_WR: begin
+                // wlast=1 且 bvalid → 逐出完成
+                if (bvalid && bready)
+                    next_state = S_AR_REQ;
             end
 
-            // ── 填充 ──
-            S_FILL_REQ: begin
-                if (ext_ready)
-                    next_state = S_FILL_WR;
+            // ── 填充 (burst read) ──
+            S_AR_REQ: begin
+                if (arready)
+                    next_state = S_BURST_RD;
             end
 
-            S_FILL_WR: begin
-                if (word_cnt_last)
-                    next_state = S_RETRY;   // tag 已写入, 重读 data BRAM
-                else
-                    next_state = S_FILL_REQ;
+            S_BURST_RD: begin
+                if (burst_rd_done)
+                    next_state = S_RETRY;
             end
 
-            // ── S_RETRY: tag 异步读 combo 出 hit (必定命中) ──
             S_RETRY: begin
                 if (req_we)
-                    next_state = S_HIT_WR;   // 写分配: RMW
+                    next_state = S_HIT_WR;
                 else
-                    next_state = S_DATA;      // 读缺失: 输出数据
+                    next_state = S_DATA;
             end
 
             default: next_state = S_IDLE;
