@@ -29,8 +29,9 @@ always @(*) begin
     if(!rst_n)begin
         pc_next=32'b0;
     end
-    // 注: stall 不再改变 pc_next 的组合值，而是通过阻止 pc_last 更新来冻结取指
-    //     这打破了 pc_next → iCache → hit_now → cpu_stall → stall → pc_next 的组合环
+    if(stall)begin
+        pc_next=pc_last;
+    end
     else if(except_taken)begin
         pc_next=pc_except;
     end
@@ -54,7 +55,7 @@ always @(posedge clk) begin
     if(~rst_n)begin
         pc_last<=32'h1c000000;
     end
-    else if(!stall)begin          // stall=1 时冻结 pc_last, pc_next 自然不变
+    else begin
         pc_last<=pc_next;
     end
 end
