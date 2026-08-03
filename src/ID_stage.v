@@ -107,15 +107,13 @@ module ID_Stage(
     // ============================================================
     wire ls0 = memRead0 || memWrite0;
     wire ls1 = memRead1 || memWrite1;
-    wire br0 = jump0 || branch0;
-    wire br1 = jump1 || branch1;
+    wire br0 = jump0 || branch0 || (|csr0[2:1]);
+    wire br1 = jump1 || branch1 || (|csr1[2:1]);
 
     wire conflict_ls  = ls0 && ls1;          // 双 LS → 只有槽1能跑, 移槽0→槽1
-    wire conflict_br  = br0 && br1;          // 双 Branch → 只有槽0能跑, 废弃槽1
-    wire conflict_csr = (|csr0[2:1]) && (|csr1[2:1]);  // 双 CSR 写 → 只发低位
+    wire conflict_br  = br0 && br1;          // 双 槽0独占 → 只有槽0能跑, 废弃槽1
     wire swap_ls      = ls0 && !ls1;          // 槽0=LS, 槽1≠LS → 交换(LS→槽1)
-    wire swap_br      = br1 && !br0;          // 槽1=BR, 槽0≠BR → 交换(BR→槽0)
-    wire swap_csr     = (|csr1[2:1]) && !(|csr0[2:1]);  // 槽1=CSR写, 槽0无 → 交换(CSR→槽0)
+    wire swap_br      = br1 && !br0;          // 槽1=槽0独占, 槽0无 → 交换(→槽0)
 
     // ============================================================
     // 上一拍发射记录传递
@@ -161,7 +159,7 @@ module ID_Stage(
     //这样这一拍就不会发射这条指令，到了下一拍，inst_controll会取出未发射的内容，再次处理这条指令
 
     assign nopl = dep09;
-    assign noph = dep10 || dep19 || conflict_ls || conflict_br || conflict_csr;
+    assign noph = dep10 || dep19 || conflict_ls || conflict_br;
 
     reg [87:0] bus0,bus1;
     wire [86:0] busl = {raw_opc0,raw_func0,raw_imm0,rk0,rj0,rd0,csr0,valu0,jump0,branch0,memRead0,memWrite0,regWrite0};
@@ -185,7 +183,7 @@ module ID_Stage(
         end
         else begin
             //sigbus中的high信号，表示若双发射，当前槽是否pc更高
-            if(swap_ls || swap_br || swap_csr)begin
+            if(swap_ls || swap_br)begin
                 bus0 = {bush,1'b1};
                 bus1 = {busl,1'b0};
             end
@@ -229,7 +227,7 @@ module ID_Stage(
             end
         end
         else begin
-            if(swap_ls || swap_br || swap_csr)begin
+            if(swap_ls || swap_br)begin
                 evalid0_out = evalid1_raw; ecode0_out = ecode1_raw;
                 evalid1_out = evalid0_raw; ecode1_out = ecode0_raw;
             end

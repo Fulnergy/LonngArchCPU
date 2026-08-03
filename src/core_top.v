@@ -103,12 +103,13 @@ module core_top(
         .bid     (bid),
         .bresp   (bresp),
         .bvalid  (bvalid),
-        .bready  (bready)
+        .bready  (bready),
+
+        .debug_wb_pc(debug0_wb_pc)
     );
 
     assign ws_valid          = 1'b0;
     assign rf_rdata          = 32'b0;
-    assign debug0_wb_pc      = 32'b0;
     assign debug0_wb_rf_wen  = 4'b0;
     assign debug0_wb_rf_wnum = 5'b0;
     assign debug0_wb_rf_wdata = 32'b0;
