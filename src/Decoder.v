@@ -81,7 +81,7 @@ module Decoder (
     //特权级指令
     wire isCSR    = (inst[31:24] == 8'b00000100);       // CSR 指令类型
     wire doCSR    = isCSR && plv0;                      // 实际执行 CSR (需内核态)
-    wire isERTN   = (inst[31:15] == 17'b00000000001011110) && plv0;  // 异常返回
+    wire isERTN   = (inst[31:15] == 17'h0C90) && plv0;  // 异常返回
 
     // ============================================================
     // 寄存器地址提取
@@ -151,7 +151,7 @@ module Decoder (
                 || isLU12IW || isPCADDU12I;
     assign load  = isLoad;
     assign store = isStore;
-    assign valu  = regWrite && !isLoad && !doCSR;               // EX结果写回 (load的WB数据来自MEM)
+    assign valu  = regWrite && !isLoad;               // EX结果写回 (load的WB数据来自MEM)
 
     assign regWrite = is3R_ALU || isALUimm || isShiftImm   // ALU运算写回
                    || isLoad                               // 加载写回
@@ -173,7 +173,7 @@ module Decoder (
     wire ine = !(is3R_ALU || isALUimm || isShiftImm
               || isLU12IW || isPCADDU12I || isLoad || isStore
               || isBranch || isB || isBL || isJIRL || isCSR
-              || isSYSCALL || isBREAK);
+              || isSYSCALL || isBREAK || isERTN);
 
     //未实现：IPE  用户态运行特权指令
 

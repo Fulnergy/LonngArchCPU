@@ -513,19 +513,27 @@ module dCache #(
     end
 
     // ============================================================
-    // CPU 读数据 (组合逻辑)
-    //   S_DATA: 上一拍 BRAM 读在本拍稳定, combo 输出
-    //   S_IDLE 拍 data_bram_dout 尚未更新 (BRAM 读还在进行)
-    //   hit1_latched 在 S_DATA 拍已锁存, 正确指向命中路
+    // CPU 读数据
+    //   S_DATA: BRAM dout 有效, 组合输出
+    //   其他:   保持 last_read_data (S_DATA 拍锁存), 防止 stall 期间归零
     // ============================================================
     wire read_data_valid;
     assign read_data_valid = (state == S_DATA);
+
+    reg [DATA_WIDTH-1:0] last_read_data;
+
+    always @(posedge clk) begin
+        if (!rst_n)
+            last_read_data <= {DATA_WIDTH{1'b0}};
+        else if (state == S_DATA)
+            last_read_data <= hit1_latched ? data_bram1_dout : data_bram0_dout;
+    end
 
     always @(*) begin
         if (read_data_valid)
             cpu_rdata = hit1_latched ? data_bram1_dout : data_bram0_dout;
         else
-            cpu_rdata = {DATA_WIDTH{1'b0}};
+            cpu_rdata = last_read_data;
     end
 
     // ============================================================
