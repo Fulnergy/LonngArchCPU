@@ -106,6 +106,11 @@ module EX_ALU(
     reg [31:0] quotient, remainder;
 
     always @(*) begin
+        // 默认赋值, 防止综合器推断 latch
+        product   = 64'b0;
+        quotient  = 32'b0;
+        remainder = 32'b0;
+
         if (!en) begin
             alu_result = 32'b0;
             branch_taken = 1'b0;

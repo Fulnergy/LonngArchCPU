@@ -99,6 +99,9 @@ module EX_LS(
     reg  [63:0] product;
 
     always @(*) begin
+        // 默认赋值, 防止综合器推断 latch
+        product = 64'b0;
+
         // ── CSR 操作: 读回值写入 GPR ──
         if (|csrBus[2:0]) begin
             alu_result = csr_read;

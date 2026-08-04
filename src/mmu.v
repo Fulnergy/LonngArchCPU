@@ -2,6 +2,7 @@
 //   DA=1: 直接地址翻译, pa = va
 //   PG=1: 映射地址翻译, 先查 DMW, 不命中暂直通 (待 TLB)
 module mmu (
+    input         clk, rst_n,
     input  [31:0] if_va,          // 取指虚地址
     input  [31:0] mem_va,         // 访存虚地址
     input  [1:0]  plv,            // 当前特权等级
@@ -10,6 +11,26 @@ module mmu (
     output [31:0] if_pa,          // 取指物理地址
     output [31:0] mem_pa          // 访存物理地址
 );
+
+    // ── TLB 实例 (仅接线, 不影响翻译) ──
+    tlb u_tlb (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .lookup_va  (mem_va),
+        .plv        (plv),
+        .lookup_pa  (),              // 暂不使用
+        .lookup_hit (),
+        .lookup_dirty(),
+        .csr_tlbsrch  (1'b0),
+        .csr_tlbrd    (1'b0),
+        .csr_tlbwr    (1'b0),
+        .csr_tlbfill  (1'b0),
+        .csr_invtlb   (1'b0),
+        .csr_tlb_va   (32'b0),
+        .csr_tlb_asid (10'b0),
+        .csr_tlb_entry(64'b0),
+        .csr_tlb_result()
+    );
 
     // DMW 命中: VA[31:29] 匹配 VSEG 且特权级允许
     function dmw_hit;

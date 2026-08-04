@@ -139,7 +139,8 @@ module Decoder (
     // 3R型ALU (排除BREAK/SYSCALL)
     wire isBREAK   = (inst[31:15] == 17'b00000000001010100);
     wire isSYSCALL = (inst[31:15] == 17'b00000000001010110);
-    wire is3R_ALU  = (inst[31:22] == 10'b0000000000) && !isBREAK && !isSYSCALL && !isERTN;
+    wire is3R_ALU  = (inst[31:22] == 10'b0000000000) && (inst[21:19] != 3'b000)
+                  && !isBREAK && !isSYSCALL;
 
     assign memRead  = isLoad;
     assign memWrite = isStore;
