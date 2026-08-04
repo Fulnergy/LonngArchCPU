@@ -268,6 +268,105 @@ module tb_core;
     end
 
     // ============================================================
+    // 数据完整性监控: 写 burst 校验
+    // ============================================================
+    reg [31:0] wr_burst_addr;        // 写 burst 起始地址
+    reg [31:0] wr_xor_sum;           // XOR 校验和
+    reg [63:0] wr_add_sum;           // 加法校验和
+    reg [ 7:0] wr_beat_cnt;          // 当前 beat 计数
+    reg [31:0] wr_first_data;        // 首拍数据
+    reg [31:0] wr_last_data;         // 末拍数据
+    integer    wr_txn_cnt;
+
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            wr_burst_addr <= 32'b0;
+            wr_xor_sum    <= 32'b0;
+            wr_add_sum    <= 64'b0;
+            wr_beat_cnt   <= 8'd0;
+            wr_first_data <= 32'b0;
+            wr_last_data  <= 32'b0;
+            wr_txn_cnt    <= 0;
+        end else begin
+            if (awvalid && awready && w_state == W_IDLE) begin
+                // AW 握手: 开始新的写 burst 统计
+                wr_burst_addr <= awaddr;
+                wr_xor_sum    <= 32'b0;
+                wr_add_sum    <= 64'b0;
+                wr_beat_cnt   <= 8'd0;
+                wr_first_data <= 32'b0;
+            end
+
+            if (wvalid && wready) begin
+                wr_xor_sum  <= wr_xor_sum ^ wdata;
+                wr_add_sum  <= wr_add_sum + {32'b0, wdata};
+                wr_beat_cnt <= wr_beat_cnt + 8'd1;
+                if (wr_beat_cnt == 8'd0)
+                    wr_first_data <= wdata;
+                wr_last_data <= wdata;
+
+                if (wlast) begin
+                    wr_txn_cnt <= wr_txn_cnt + 1;
+                    $display("[TB] W-BURST #%0d | addr=0x%08h beats=%0d | xor=0x%08h add=0x%016h | first=0x%08h last=0x%08h @%0t",
+                             wr_txn_cnt, wr_burst_addr, wr_beat_cnt + 8'd1,
+                             wr_xor_sum ^ wdata,
+                             wr_add_sum + {32'b0, wdata},
+                             wr_first_data, wdata, $time);
+                end
+            end
+        end
+    end
+
+    // ============================================================
+    // 数据完整性监控: 读 burst 校验
+    // ============================================================
+    reg [31:0] rd_burst_addr;
+    reg [31:0] rd_xor_sum;
+    reg [63:0] rd_add_sum;
+    reg [ 7:0] rd_beat_cnt;
+    reg [31:0] rd_first_data;
+    reg [31:0] rd_last_data;
+    integer    rd_txn_cnt;
+
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            rd_burst_addr <= 32'b0;
+            rd_xor_sum    <= 32'b0;
+            rd_add_sum    <= 64'b0;
+            rd_beat_cnt   <= 8'd0;
+            rd_first_data <= 32'b0;
+            rd_last_data  <= 32'b0;
+            rd_txn_cnt    <= 0;
+        end else begin
+            if (arvalid && arready && r_state == R_IDLE) begin
+                rd_burst_addr <= araddr;
+                rd_xor_sum    <= 32'b0;
+                rd_add_sum    <= 64'b0;
+                rd_beat_cnt   <= 8'd0;
+                rd_first_data <= 32'b0;
+            end
+
+            if (rvalid && rready) begin
+                rd_xor_sum  <= rd_xor_sum ^ rdata;
+                rd_add_sum  <= rd_add_sum + {32'b0, rdata};
+                rd_beat_cnt <= rd_beat_cnt + 8'd1;
+                if (rd_beat_cnt == 8'd0)
+                    rd_first_data <= rdata;
+                rd_last_data <= rdata;
+
+                if (rlast) begin
+                    rd_txn_cnt <= rd_txn_cnt + 1;
+                    $display("[TB] R-BURST #%0d | addr=0x%08h beats=%0d | xor=0x%08h add=0x%016h | first=0x%08h last=0x%08h @%0t",
+                             rd_txn_cnt, rd_burst_addr, rd_beat_cnt + 8'd1,
+                             rd_xor_sum ^ rdata,
+                             rd_add_sum + {32'b0, rdata},
+                             rd_first_data, rdata, $time);
+                end
+            end
+        end
+    end
+
+    // ============================================================
     // 仿真控制
     // ============================================================
     integer cycle_cnt;
@@ -282,6 +381,8 @@ module tb_core;
         #(CLK_PERIOD * SIM_CYCLES);
         $display("============================================================");
         $display("[TB] Simulation finished after %0d cycles", SIM_CYCLES);
+        $display("[TB] Read transactions:  %0d", rd_txn_cnt);
+        $display("[TB] Write transactions: %0d", wr_txn_cnt);
         $display("============================================================");
         $finish;
     end

@@ -43,18 +43,23 @@ fill_loop:
     add.w     $r15, $r1, $r6
     st.w      $r5, $r15, 0         # last: [0x13C]=0xAF
 
-    # == T2.5: 立即回读验证 (在 eviction 前) ==
-    addi.w    $r5, $r0, 0xA0
-    addi.w    $r6, $r0, 0
-
-chk_loop:
-    add.w     $r15, $r1, $r6
-    ld.w      $r12, $r15, 0
-    addi.w    $r5, $r5, 1
-    addi.w    $r6, $r6, 4
-    bne       $r6, $r7, chk_loop
-    add.w     $r15, $r1, $r6
-    ld.w      $r12, $r15, 0        # last read
+    # == T2.5: 将整条 cache line 逐字读入 $r16-$r31 (eviction 前快照) ==
+    ld.w      $r16, $r1, 0      # [0x100] = A0
+    ld.w      $r17, $r1, 4      # [0x104] = A1
+    ld.w      $r18, $r1, 8      # [0x108] = A2
+    ld.w      $r19, $r1, 12     # [0x10C] = A3
+    ld.w      $r20, $r1, 16     # [0x110] = A4
+    ld.w      $r21, $r1, 20     # [0x114] = A5
+    ld.w      $r22, $r1, 24     # [0x118] = A6
+    ld.w      $r23, $r1, 28     # [0x11C] = A7
+    ld.w      $r24, $r1, 32     # [0x120] = A8
+    ld.w      $r25, $r1, 36     # [0x124] = A9
+    ld.w      $r26, $r1, 40     # [0x128] = AA
+    ld.w      $r27, $r1, 44     # [0x12C] = AB
+    ld.w      $r28, $r1, 48     # [0x130] = AC
+    ld.w      $r29, $r1, 52     # [0x134] = AD
+    ld.w      $r30, $r1, 56     # [0x138] = AE
+    ld.w      $r31, $r1, 60     # [0x13C] = AF
 
     # == T3: dirty eviction + write-allocate ==
     ld.w      $r0, $r2, 0          # fill way1 clean (0x2100)

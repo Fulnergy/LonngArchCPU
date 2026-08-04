@@ -375,9 +375,14 @@ module dCache #(
                 data_addr = {req_set, word_cnt[WORD_OFFSET_WIDTH-1:0]};
             end
 
-            S_BURST_WR: begin
-                // 预读下一个 BRAM word, 供下一拍 wdata 使用
+            S_AW_REQ: begin
+                // 维持预读: word[1] 供 S_BURST_WR 第2拍使用
                 data_addr = {req_set, word_cnt[WORD_OFFSET_WIDTH-1:0] + 1'b1};
+            end
+
+            S_BURST_WR: begin
+                // 预读 word_cnt+2 (BRAM 1拍 + evict_data_reg 1拍 = 2拍 pipeline)
+                data_addr = {req_set, word_cnt[WORD_OFFSET_WIDTH-1:0] + 2'd2};
             end
 
             S_HIT_WR: begin

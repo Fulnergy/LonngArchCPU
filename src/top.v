@@ -706,8 +706,11 @@ end
 //   单独命中: br > load > default
 // ============================================================
 wire [31:0] i_memWdata_final;
+// 年龄检查: 仅当 slot 0 不新于 slot 1 (同组或更老) 时允许前递
+//   pc_low_br_mem > pc_low_ls_mem → slot 0 来自更晚的组 → 禁止前递
 wire        fwd_mem_br   = sigBus_br_mem[6] && sigBus_br_mem[1]
-                        && (regAddr_rk_ls_mem == regAddr_rd_br_mem);
+                        && (regAddr_rk_ls_mem == regAddr_rd_br_mem)
+                        && (pc_low_br_mem <= pc_low_ls_mem);
 
 // MEM store 转发: 仅使用已寄存的 aluResult_br_mem
 //   memRdata_ls_wb (组合)不再直连, 避免 dCache 输出→输入组合环
