@@ -160,12 +160,14 @@ end
 // ── 地址翻译 ──
 wire [31:0] if_pa, mem_pa;
 mmu u_mmu (
-    .if_va (pc_next),
-    .mem_va(memAddr_ls_mem),
-    .plv   (plv), .da(da), .pg(pg),
-    .dmw0  (dmw0_val), .dmw1(dmw1_val),
-    .if_pa (if_pa),
-    .mem_pa(mem_pa)
+    .clk    (clk),
+    .rst_n  (rst_n),
+    .if_va  (pc_next),
+    .mem_va (memAddr_ls_mem),
+    .plv    (plv), .da(da), .pg(pg),
+    .dmw0   (dmw0_val), .dmw1(dmw1_val),
+    .if_pa  (if_pa),
+    .mem_pa (mem_pa)
 );
 
 IF_Stage uif (
