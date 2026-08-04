@@ -147,12 +147,12 @@ module ID_Stage(
     // 同拍依赖检测
     // ============================================================
 
-    //排除store，因其MEM才使用数据，可forwarding
-    wire dep10 = vrd0 && !store1 && 
+    //store 也需检测依赖, MEM 级转发已去除 memRdata_ls_wb 组合路径
+    wire dep10 = vrd0 &&
         (vrj1 && rj1==rd0 || vrk1 && rk1==rd0);//高位指令依赖低位指令结果
-    wire dep09 = load9 && !store0 && 
+    wire dep09 = load9 &&
         (rd9==rj0 && vrj0 || rd9==rk0 && vrk0);//这一拍低位依赖上一拍load的结果
-    wire dep19 = load9 && !store1 && 
+    wire dep19 = load9 &&
         (rd9==rj1 && vrj1 || rd9==rk1 && vrk1);//这一拍高位依赖上一拍load的结果
 
     //某条指令stall的方式就是将这条指令的nop置1

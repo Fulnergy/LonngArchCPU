@@ -50,6 +50,8 @@ module iCache #(
     input  wire                     ext_ready
 );
 
+    parameter NOP = 32'h03400000;
+
     // ============================================================
     // 派生参数
     // ============================================================
@@ -419,7 +421,7 @@ module iCache #(
 
     always @(posedge clk) begin
         if (!rst_n)
-            last_read_data <= {DATA_WIDTH{1'b0}};
+            last_read_data <= {NOP,NOP};
         else if (state == S_DATA)
             last_read_data <= hit1_latched ? data_bram1_dout : data_bram0_dout;
     end

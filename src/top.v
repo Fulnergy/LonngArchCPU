@@ -686,13 +686,11 @@ end
 wire [31:0] i_memWdata_final;
 wire        fwd_mem_br   = sigBus_br_mem[6] && sigBus_br_mem[1]
                         && (regAddr_rk_ls_mem == regAddr_rd_br_mem);
-wire        fwd_mem_load = sigBus_ls_mem[3] && (regAddr_rk_ls_mem == regAddr_rd_ls_mem);
-wire        fwd_mem_both = fwd_mem_br && fwd_mem_load;
 
-assign i_memWdata_final = fwd_mem_both ? (sigBus_ls_mem[0] ? memRdata_ls_wb : aluResult_br_mem) :
-                          fwd_mem_br   ? aluResult_br_mem :
-                          fwd_mem_load ? memRdata_ls_wb :
-                                         memWdata_ls_mem;
+// MEM store 转发: 仅使用已寄存的 aluResult_br_mem
+//   memRdata_ls_wb (组合)不再直连, 避免 dCache 输出→输入组合环
+//   load→store 依赖改由 ID 阶段插入 NOP 处理
+assign i_memWdata_final = fwd_mem_br ? aluResult_br_mem : memWdata_ls_mem;
 
 // ── 写数据按地址对齐移位 (st.b/st.h 需要, st.w 不移) ──
 wire [4:0] wdata_shift = memSize_ls_mem == 2'b00 ? {1'b0, memAddr_ls_mem[1:0], 3'b0} :
@@ -851,7 +849,7 @@ assign debug_wb_pc = pc_low_br_wb;
 csr ucsr(
     .clk(clk), 
     .rst_n(rst_n),
-    .wea(|csrBus_br_wb[2:1] && !flush_br_wb),
+    .wea(|csrBus_br_wb[2:1] && !flush_br_wb && !stall),
     .except     (except_br || except_ls),
     .except_ecode(except_br ? ecode_br_wb : ecode_ls_wb),
     .except_era (except_br ? pc_low_br_wb : pc_low_ls_wb),
