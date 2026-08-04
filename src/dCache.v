@@ -112,6 +112,7 @@ module dCache #(
     localparam S_AR_REQ     = 4'd6;
     localparam S_BURST_RD   = 4'd7;
     localparam S_RETRY      = 4'd8;
+    localparam S_BRESP      = 4'd9;
 
     // ============================================================
     // 请求锁存寄存器 (提前声明, active_addr 逻辑需要引用 req_addr)
@@ -284,6 +285,7 @@ module dCache #(
     reg [CNT_WIDTH-1:0] word_cnt;
     reg [DATA_WIDTH-1:0] rdata_latched;
     reg [DATA_WIDTH-1:0] evict_data_reg;
+    reg                  evict_rd_cyc;   // S_EVICT_RD 第2拍标志
     wire word_cnt_last;
     assign word_cnt_last = (word_cnt == WORDS_PER_LINE - 1);
     wire burst_rd_done;
@@ -300,18 +302,25 @@ module dCache #(
     always @(posedge clk) begin
         if (!rst_n) begin
             word_cnt <= 0;
+            evict_rd_cyc <= 1'b0;
         end else begin
             case (state)
                 S_BURST_RD: if (rvalid && rready) word_cnt <= word_cnt + 1;
                 S_BURST_WR: if (wvalid && wready) word_cnt <= word_cnt + 1;
                 default:    word_cnt <= 0;
             endcase
+            // S_EVICT_RD 第2拍标志
+            if (state == S_EVICT_RD)
+                evict_rd_cyc <= 1'b1;
+            else
+                evict_rd_cyc <= 1'b0;
         end
     end
 
-    // evict_data 在 S_EVICT_RD 首次锁存, S_BURST_WR 逐拍更新
+    // evict_data 在 S_EVICT_RD 第2拍锁存 (BRAM 已输出 word[0]),
+    // S_BURST_WR 逐拍预读更新 (data_addr = word_cnt+1 → BRAM 下一拍输出下一字)
     always @(posedge clk) begin
-        if (state == S_EVICT_RD || state == S_BURST_WR)
+        if ((state == S_EVICT_RD && evict_rd_cyc) || state == S_BURST_WR)
             evict_data_reg <= evict_data;
     end
 
@@ -430,7 +439,7 @@ module dCache #(
         wstrb   = 4'b1111;
         wlast   = (state == S_BURST_WR) && word_cnt_last;
 
-        bready  = (state == S_BURST_WR);
+        bready  = (state == S_BURST_WR) || (state == S_BRESP);
     end
 
     // ============================================================
@@ -480,7 +489,10 @@ module dCache #(
             end
 
             S_EVICT_RD: begin
-                next_state = S_AW_REQ;
+                // 第1拍: 设置 BRAM 地址 (data_addr = word[0]), 等待
+                // 第2拍: BRAM 输出 word[0], evict_data_reg 锁存, 进入 S_AW_REQ
+                if (evict_rd_cyc)
+                    next_state = S_AW_REQ;
             end
 
             S_AW_REQ: begin
@@ -489,7 +501,12 @@ module dCache #(
             end
 
             S_BURST_WR: begin
-                if (bvalid && bready)
+                if (wvalid && wready && word_cnt_last)
+                    next_state = S_BRESP;
+            end
+
+            S_BRESP: begin
+                if (bvalid)
                     next_state = S_AR_REQ;
             end
 

@@ -39,7 +39,8 @@ module tb_core;
     reg  [ 3:0] rid;
     reg  [31:0] rdata;
     reg  [ 1:0] rresp;
-    reg         rlast, rvalid;
+    reg         rvalid;
+    wire        rlast;
     reg         arready;
 
     reg  [ 3:0] bid;
@@ -101,7 +102,7 @@ module tb_core;
     initial begin
         aresetn = 1'b0;
         arready = 1'b0; awready = 1'b0; wready  = 1'b0;
-        rvalid  = 1'b0; rlast   = 1'b0; rresp   = 2'b0;
+        rvalid  = 1'b0; rresp   = 2'b0;
         bvalid  = 1'b0; bresp   = 2'b0;
         rid     = 4'b0; rdata   = 32'b0;
         bid     = 4'b0;
@@ -138,12 +139,14 @@ module tb_core;
     wire [31:0] r_data_comb;
     assign r_data_comb = dram[r_dram_idx];
 
+    // rlast 组合逻辑: 末拍 (r_cnt == r_len) 时置 1, 否则 0
+    assign rlast = (r_state == R_RESP) && (r_cnt == r_len);
+
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             r_state      <= R_IDLE;
             arready      <= 1'b0;
             rvalid       <= 1'b0;
-            rlast        <= 1'b0;
             rresp        <= 2'b0;
             rid          <= 4'b0;
             rdata        <= 32'b0;
@@ -156,7 +159,6 @@ module tb_core;
                 R_IDLE: begin
                     arready <= 1'b1;
                     rvalid  <= 1'b0;
-                    rlast   <= 1'b0;
                     if (arvalid && arready) begin
                         r_addr_latch <= araddr;
                         r_id_latch   <= arid;
@@ -171,7 +173,6 @@ module tb_core;
                     rvalid  <= 1'b1;
                     rresp   <= 2'b00;
                     rid     <= r_id_latch;
-                    rlast   <= (r_cnt == r_len);
 
                     if (rvalid && rready) begin
                         // 握手成功: 地址+4, 预读下一拍数据避免重复
